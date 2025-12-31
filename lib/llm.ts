@@ -161,8 +161,8 @@ ${context.summary}
   return messages;
 }
 
-// Tama personality prompt - used across all LLM interactions
-const TAMA_PERSONALITY = `You are Tama, a cozy cat-girl companion designed to support a user with ADHD.
+// Mika personality prompt - used across all LLM interactions
+const MIKA_PERSONALITY = `You are Mika, a cozy cat-girl companion designed to support a user with ADHD.
 
 You're not a coach or manager. You're a friend who happens to be good at holding space, remembering things, and offering gentle nudges when asked.
 
@@ -191,7 +191,7 @@ When asked for advice, share gently—things that sometimes help people, not ins
 `;
 
 // Base system prompt - timestamp will be prepended dynamically
-// Intent parsing prompt - references TAMA_PERSONALITY for consistent character
+// Intent parsing prompt - references MIKA_PERSONALITY for consistent character
 // Intent parsing prompt - stripped down, no personality needed since output is JSON
 const INTENT_PARSING_PROMPT = `Parse user messages into JSON. Output ONLY valid JSON, no markdown or explanation.
 
@@ -429,7 +429,7 @@ export async function generateReminderMessage(
 ): Promise<string> {
   const client = getClient();
 
-  const systemPrompt = `${TAMA_PERSONALITY}
+  const systemPrompt = `${MIKA_PERSONALITY}
 
 Generate the initial reminder notification for a task. This is the first time you're nudging the user about this task at the time they requested. Keep it to 1-2 short sentences. Frame it as a soft nudge, not a command. Examples of tone: "Just a soft reminder about...", "This came up - ...", "Passing this along: ..."`;
 
@@ -456,7 +456,7 @@ export async function generateFinalNagMessage(
 ): Promise<string> {
   const client = getClient();
 
-  const systemPrompt = `${TAMA_PERSONALITY}
+  const systemPrompt = `${MIKA_PERSONALITY}
 
 Generate the final reminder message for a task. This is the last nudge - after this, you won't remind them again about this task. Keep it warm and pressure-free. Let them know it's okay and the task is still in their list whenever they're ready.`;
 
@@ -483,7 +483,7 @@ export async function generateFollowUpMessage(
 ): Promise<string> {
   const client = getClient();
 
-  const systemPrompt = `${TAMA_PERSONALITY}
+  const systemPrompt = `${MIKA_PERSONALITY}
 
 Generate a very brief follow-up to a reminder you sent a few minutes ago. The user hasn't responded yet, so this is just a gentle "hey, still here" nudge. Keep it to one short sentence. Don't repeat the task details - just a soft check-in.`;
 
@@ -522,7 +522,7 @@ export async function generateNaggingMessage(
 
   const style = reminderStyles[Math.min(naggingLevel, 4)] || reminderStyles[4];
 
-  const systemPrompt = `${TAMA_PERSONALITY}
+  const systemPrompt = `${MIKA_PERSONALITY}
 
 Generate a soft reminder message for a task. ${style}
 
@@ -564,7 +564,7 @@ export async function generateCheckinPrompt(
 ): Promise<string> {
   const client = getClient();
 
-  const systemPrompt = `${TAMA_PERSONALITY}
+  const systemPrompt = `${MIKA_PERSONALITY}
 
 Generate a soft daily check-in. Ask the user to rate how their day felt on a scale of 1-5, with optional notes. Keep it warm and low-pressure. No exclamation points. Vary your wording to keep it fresh. Frame it as curiosity, not obligation.`;
 
@@ -590,7 +590,7 @@ export async function generateEndOfDayMessage(
 ): Promise<string> {
   const client = getClient();
 
-  const systemPrompt = `${TAMA_PERSONALITY}
+  const systemPrompt = `${MIKA_PERSONALITY}
 
 Generate a gentle end-of-day message. Ask if there's anything the user wants to remember for tomorrow - a thought, a task, anything on their mind. Keep it warm and cozy. Keep it to 2-3 sentences. Vary your wording to keep it fresh.`;
 
@@ -650,7 +650,7 @@ export async function generateMorningReviewMessage(
     dataSection += `Overdue reminders (${data.overdueTasks.length}):\n${overdueList}`;
   }
 
-  const systemPrompt = `${TAMA_PERSONALITY}
+  const systemPrompt = `${MIKA_PERSONALITY}
 
 Generate a gentle morning review message. This is a daily invitation for the user to look at their items. The goal is to help them:
 - See today's reminders (these are things scheduled for today with specific times or just for this day)
@@ -724,7 +724,7 @@ export async function generateWeeklyInsights(
       ? dumps.map((d) => `- ${d.content}`).join("\n")
       : "No brain dumps this week.";
 
-  const systemPrompt = `${TAMA_PERSONALITY}
+  const systemPrompt = `${MIKA_PERSONALITY}
 
 Create a gentle weekly reflection. Notice patterns (which days felt better/harder, any themes) without judgment. If you offer suggestions, frame them as options, not directives - "maybe," "you could try," "if it helps." Never imply the user should have done more. Treat all outcomes as neutral data. Keep it warm and concise.`;
 
@@ -777,7 +777,7 @@ export async function generateBlockStartMessage(
     ? data.tasks.map((t) => `- ${t.content}${t.energy ? ` (${t.energy} energy)` : ""}`).join("\n")
     : "No tasks slotted yet";
 
-  const systemPrompt = `${TAMA_PERSONALITY}
+  const systemPrompt = `${MIKA_PERSONALITY}
 
 Announce a time block starting. Be brief and encouraging. Mention what tasks are lined up if any. Don't pressure - just inform.`;
 
@@ -816,7 +816,7 @@ export async function generateBlockEndMessage(
 ): Promise<string> {
   const client = getClient();
 
-  const systemPrompt = `${TAMA_PERSONALITY}
+  const systemPrompt = `${MIKA_PERSONALITY}
 
 A time block is ending. Briefly acknowledge any wins. If there are remaining tasks, mention they'll carry forward - no judgment. If there's a next block, mention it casually.`;
 
@@ -868,7 +868,7 @@ export async function generateEnergyCheckMessage(
 ): Promise<string> {
   const client = getClient();
 
-  const systemPrompt = `${TAMA_PERSONALITY}
+  const systemPrompt = `${MIKA_PERSONALITY}
 
 Ask for a quick energy check (1-5 scale). Keep it very brief and casual. If they're in a block, mention it. Don't explain the scale - they know it.`;
 
@@ -1257,10 +1257,10 @@ export async function generateActionResponse(
   const isConversation = actionContext.type === "conversation";
 
   const systemPrompt = isConversation
-    ? `${TAMA_PERSONALITY}
+    ? `${MIKA_PERSONALITY}
 
 Have a natural conversation with the user. Respond as you would to a friend - no length constraints.`
-    : `${TAMA_PERSONALITY}
+    : `${MIKA_PERSONALITY}
 
 Generate a response to acknowledge an action. Be warm but brief. For task lists, you may format with bullet points or numbers.`;
 
@@ -1397,7 +1397,7 @@ export async function generateConversationSummary(
         minute: "2-digit",
         hour12: true,
       });
-      return `[${time}] ${m.role === "user" ? "User" : "Tama"}: ${m.content}`;
+      return `[${time}] ${m.role === "user" ? "User" : "Mika"}: ${m.content}`;
     })
     .join("\n");
 
@@ -1411,7 +1411,7 @@ export async function generateConversationSummary(
     messages: [
       {
         role: "system",
-        content: `You are summarizing a conversation between a user with ADHD and their support companion Tama. Create a concise summary that captures:
+        content: `You are summarizing a conversation between a user with ADHD and their support companion Mika. Create a concise summary that captures:
 
 1. Key topics discussed
 2. Any tasks, reminders, or commitments mentioned
@@ -1594,7 +1594,7 @@ export async function generateExtractionResponse(
     })
     .join("\n");
 
-  const systemPrompt = `${TAMA_PERSONALITY}
+  const systemPrompt = `${MIKA_PERSONALITY}
 
 The user just dumped some thoughts and you extracted potential tasks from them. Present these extracted tasks to the user for confirmation. Be warm and casual. Ask if these look right and if they want to add them.`;
 

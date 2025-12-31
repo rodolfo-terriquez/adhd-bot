@@ -1637,8 +1637,8 @@ async function handleDebugCommand(chatId: number): Promise<void> {
     timeZoneName: "short",
   });
 
-  // Tama personality (copied from lib/llm.ts to show exact text)
-  const tamaPersonality = `You are Tama, a cozy cat-girl companion designed to support a user with ADHD.
+  // Mika personality (copied from lib/llm.ts to show exact text)
+  const mikaPersonality = `You are Mika, a cozy cat-girl companion designed to support a user with ADHD.
 
   You're not a coach or manager. You're a friend who happens to be good at holding space, remembering things, and offering gentle nudges when asked.
 
@@ -1682,10 +1682,10 @@ async function handleDebugCommand(chatId: number): Promise<void> {
     "",
     "---",
     "",
-    "## 2. Tama Personality",
+    "## 2. Mika Personality",
     "",
     "```",
-    tamaPersonality,
+    mikaPersonality,
     "```",
     "",
     "---",
