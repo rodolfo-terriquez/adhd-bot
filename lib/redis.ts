@@ -24,35 +24,39 @@ function getClient(): Redis {
   return redisClient;
 }
 
-// Key patterns
-const TASK_KEY = (chatId: number, taskId: string) => `task:${chatId}:${taskId}`;
-const TASKS_SET_KEY = (chatId: number) => `tasks:${chatId}`;
-const DUMP_KEY = (chatId: number, dumpId: string) => `dump:${chatId}:${dumpId}`;
+// Key prefix for multi-project support (allows sharing the same Redis instance)
+// Set REDIS_KEY_PREFIX env var to isolate data between projects (e.g., "v2:" for the new version)
+const getKeyPrefix = (): string => process.env.REDIS_KEY_PREFIX || "";
+
+// Key patterns (all include prefix for multi-project isolation)
+const TASK_KEY = (chatId: number, taskId: string) => `${getKeyPrefix()}task:${chatId}:${taskId}`;
+const TASKS_SET_KEY = (chatId: number) => `${getKeyPrefix()}tasks:${chatId}`;
+const DUMP_KEY = (chatId: number, dumpId: string) => `${getKeyPrefix()}dump:${chatId}:${dumpId}`;
 const DUMPS_SET_KEY = (chatId: number, date: string) =>
-  `dumps:${chatId}:${date}`;
+  `${getKeyPrefix()}dumps:${chatId}:${date}`;
 const CHECKIN_KEY = (chatId: number, date: string) =>
-  `checkin:${chatId}:${date}`;
-const CHECKINS_SET_KEY = (chatId: number) => `checkins:${chatId}`;
-const USER_PREFS_KEY = (chatId: number) => `user_prefs:${chatId}`;
-const AWAITING_CHECKIN_KEY = (chatId: number) => `awaiting_checkin:${chatId}`;
-const PENDING_FOLLOW_UP_KEY = (chatId: number) => `pending_follow_up:${chatId}`;
+  `${getKeyPrefix()}checkin:${chatId}:${date}`;
+const CHECKINS_SET_KEY = (chatId: number) => `${getKeyPrefix()}checkins:${chatId}`;
+const USER_PREFS_KEY = (chatId: number) => `${getKeyPrefix()}user_prefs:${chatId}`;
+const AWAITING_CHECKIN_KEY = (chatId: number) => `${getKeyPrefix()}awaiting_checkin:${chatId}`;
+const PENDING_FOLLOW_UP_KEY = (chatId: number) => `${getKeyPrefix()}pending_follow_up:${chatId}`;
 const COMPLETED_TASKS_KEY = (chatId: number, date: string) =>
-  `completed:${chatId}:${date}`;
+  `${getKeyPrefix()}completed:${chatId}:${date}`;
 
 // List key patterns
-const LIST_KEY = (chatId: number, listId: string) => `list:${chatId}:${listId}`;
-const LISTS_SET_KEY = (chatId: number) => `lists:${chatId}`;
+const LIST_KEY = (chatId: number, listId: string) => `${getKeyPrefix()}list:${chatId}:${listId}`;
+const LISTS_SET_KEY = (chatId: number) => `${getKeyPrefix()}lists:${chatId}`;
 
 // V2 key patterns
-const BLOCK_KEY = (chatId: number, blockId: string) => `block:${chatId}:${blockId}`;
-const BLOCKS_SET_KEY = (chatId: number) => `blocks:${chatId}`;
-const ENERGY_LOG_KEY = (chatId: number, logId: string) => `energy_log:${chatId}:${logId}`;
-const ENERGY_LOGS_SET_KEY = (chatId: number, date: string) => `energy_logs:${chatId}:${date}`;
-const ENERGY_PATTERN_KEY = (chatId: number) => `energy_pattern:${chatId}`;
-const CAPTURED_KEY = (chatId: number, capturedId: string) => `captured:${chatId}:${capturedId}`;
-const CAPTURED_PENDING_KEY = (chatId: number) => `captured_pending:${chatId}`;
-const BLOCK_TASKS_KEY = (chatId: number, blockId: string, date: string) => `block_tasks:${chatId}:${blockId}:${date}`;
-const CURRENT_BLOCK_KEY = (chatId: number) => `current_block:${chatId}`;
+const BLOCK_KEY = (chatId: number, blockId: string) => `${getKeyPrefix()}block:${chatId}:${blockId}`;
+const BLOCKS_SET_KEY = (chatId: number) => `${getKeyPrefix()}blocks:${chatId}`;
+const ENERGY_LOG_KEY = (chatId: number, logId: string) => `${getKeyPrefix()}energy_log:${chatId}:${logId}`;
+const ENERGY_LOGS_SET_KEY = (chatId: number, date: string) => `${getKeyPrefix()}energy_logs:${chatId}:${date}`;
+const ENERGY_PATTERN_KEY = (chatId: number) => `${getKeyPrefix()}energy_pattern:${chatId}`;
+const CAPTURED_KEY = (chatId: number, capturedId: string) => `${getKeyPrefix()}captured:${chatId}:${capturedId}`;
+const CAPTURED_PENDING_KEY = (chatId: number) => `${getKeyPrefix()}captured_pending:${chatId}`;
+const BLOCK_TASKS_KEY = (chatId: number, blockId: string, date: string) => `${getKeyPrefix()}block_tasks:${chatId}:${blockId}:${date}`;
+const CURRENT_BLOCK_KEY = (chatId: number) => `${getKeyPrefix()}current_block:${chatId}`;
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -676,23 +680,23 @@ export async function getWeeklyCompletedTaskCount(
 }
 
 // Chat IDs for daily summary (store all active chats)
-const ACTIVE_CHATS_KEY = "active_chats";
+const ACTIVE_CHATS_KEY = () => `${getKeyPrefix()}active_chats`;
 
 export async function registerChat(chatId: number): Promise<boolean> {
   const redis = getClient();
   // sadd returns the number of elements added (1 if new, 0 if already exists)
-  const added = await redis.sadd(ACTIVE_CHATS_KEY, chatId.toString());
+  const added = await redis.sadd(ACTIVE_CHATS_KEY(), chatId.toString());
   return added === 1;
 }
 
 export async function getActiveChats(): Promise<number[]> {
   const redis = getClient();
-  const chatIds = await redis.smembers<string[]>(ACTIVE_CHATS_KEY);
+  const chatIds = await redis.smembers<string[]>(ACTIVE_CHATS_KEY());
   return (chatIds || []).map((id) => parseInt(id, 10));
 }
 
 // Conversation memory
-const CONVERSATION_KEY = (chatId: number) => `conversation:${chatId}`;
+const CONVERSATION_KEY = (chatId: number) => `${getKeyPrefix()}conversation:${chatId}`;
 const MAX_CONVERSATION_PAIRS = 30; // Trigger summarization at 30 pairs
 const RECENT_PAIRS_TO_KEEP = 10; // Keep 10 most recent pairs verbatim after summarization
 
