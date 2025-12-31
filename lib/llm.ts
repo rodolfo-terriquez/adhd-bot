@@ -13,8 +13,10 @@ import type {
 import type { ConversationMessage } from "./redis.js";
 
 // Initialize Braintrust logger for tracing
+// Use project ID if provided, otherwise fall back to project name
 const logger = initLogger({
-  projectName: process.env.BRAINTRUST_PROJECT_NAME || "Tama ADHD Bot",
+  projectId: process.env.BRAINTRUST_PROJECT_ID,
+  projectName: process.env.BRAINTRUST_PROJECT_ID ? undefined : (process.env.BRAINTRUST_PROJECT_NAME || "Tama ADHD Bot"),
   apiKey: process.env.BRAINTRUST_API_KEY,
 });
 
