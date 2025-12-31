@@ -77,6 +77,7 @@ export type Intent =
   | EnergyMatchIntent
   | LowEnergyModeIntent
   | ShowEnergyPatternsIntent
+  | EnergyObservationIntent
   | VacationModeIntent
   | WeeklyPlanningIntent
   | DayPlanningIntent
@@ -469,6 +470,16 @@ export interface LowEnergyModeIntent {
 
 export interface ShowEnergyPatternsIntent {
   type: "show_energy_patterns";
+}
+
+// Implicit energy observation from conversation (e.g., "I feel energized in the evenings")
+export interface EnergyObservationIntent {
+  type: "energy_observation";
+  timeOfDay?: "morning" | "midday" | "afternoon" | "evening" | "night";
+  dayOfWeek?: DayOfWeek;
+  energyLevel: "high" | "medium" | "low";
+  isPattern: boolean; // true if user says "usually", "always", "tend to" vs current state
+  originalMessage: string; // Keep the original for context
 }
 
 // Vacation mode intent

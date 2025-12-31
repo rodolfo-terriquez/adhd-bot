@@ -1,4 +1,4 @@
-# Tama Bot v2 Architecture
+# Mika Bot v2 Architecture
 
 ## Vision Summary
 
@@ -15,60 +15,179 @@ Transform from a reminder bot into an **ADHD executive function assistant** that
 
 ---
 
-## 1. New Data Models
+## 1. How Mika Learns From You
 
-### ActivityBlock
-Time blocks that structure the day:
-```typescript
-interface ActivityBlock {
-  id: string;
-  chatId: number;
-  name: string;                    // "Morning routine", "Focus time"
-  startTime: string;               // "HH:MM"
-  endTime: string;
-  days: DayOfWeek[];               // Which days this applies
-  energyProfile: "high" | "medium" | "low" | "variable";
-  taskCategories: string[];        // ["admin", "creative", "errands"]
-  flexLevel: "fixed" | "flexible" | "soft";
-  isDefault: boolean;
-  status: "active" | "paused";
-  createdAt: number;
-  updatedAt: number;
-}
+Mika learns in three ways, building an increasingly accurate picture of your energy patterns and preferences:
 
-type DayOfWeek = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
-```
+### 1.1 Explicit Energy Logging
+When you tell Mika your energy level directly:
+- "energy 3" or "feeling like a 4"
+- "exhausted" (infers level 1) or "pretty energized" (infers level 4)
 
-### EnergyLog
-Track energy throughout the day:
-```typescript
-interface EnergyLog {
-  id: string;
-  chatId: number;
-  timestamp: number;
-  level: 1 | 2 | 3 | 4 | 5;        // 1 = exhausted, 5 = energized
-  context?: string;                 // "just woke up", "after lunch"
-  blockId?: string;                 // Which block they were in
-  createdAt: number;
-}
-```
+These explicit logs are recorded with:
+- The hour of day
+- The day of week
+- Which activity block you're in (if any)
+- Any context you provide ("just woke up", "after lunch")
 
-### EnergyPattern
-Learned patterns about user's energy:
+### 1.2 Conversational Energy Observations
+Mika picks up on energy patterns mentioned casually in conversation:
+- "I usually feel energized in the evenings" → Records: evening = high energy (pattern)
+- "Mornings are rough for me" → Records: morning = low energy (pattern)
+- "I'm more productive on Tuesdays" → Records: Tuesday = high energy (pattern)
+- "Feeling pretty drained this afternoon" → Records: afternoon = low energy (one-time)
+
+**How it works:**
+- The intent parser recognizes energy-related language with time/day context
+- Patterns (words like "usually", "always", "tend to") get stronger weight (alpha=0.3)
+- One-time observations get moderate weight (alpha=0.2)
+- User-stated preferences are weighted higher than inferred data since they're more reliable
+
+### 1.3 Implicit Learning from Behavior
+Over time, Mika tracks:
+- Which tasks get completed vs snoozed/dropped
+- Success rates at different times of day
+- Completion patterns by energy level
+- Task duration estimates vs actual time
+
+---
+
+## 2. Energy Pattern Storage
+
+All learning data is stored in the `EnergyPattern` structure:
+
 ```typescript
 interface EnergyPattern {
   chatId: number;
-  hourlyAverages: Record<number, number>;      // hour (0-23) -> avg energy
-  dayOfWeekAverages: Record<DayOfWeek, number>;
-  blockAverages: Record<string, number>;       // blockId -> avg
+  hourlyAverages: Record<number, number>;      // hour (0-23) -> avg energy (1-5)
+  dayOfWeekAverages: Record<DayOfWeek, number>; // day -> avg energy
+  blockAverages: Record<string, number>;        // blockId -> avg energy
   taskTypeSuccessRates: Record<string, Record<string, number>>; // task type -> energy -> completion rate
   lastUpdated: number;
   dataPoints: number;
 }
 ```
 
-### CapturedItem
-Raw unprocessed input before task extraction:
+### Learning Algorithm
+
+All updates use exponential moving average (EMA) to favor recent data:
+
+```typescript
+newAverage = alpha * newValue + (1 - alpha) * oldAverage
+```
+
+**Alpha values:**
+- Explicit energy logs: 0.1 (gradual learning)
+- User-stated patterns: 0.3 (strong weight - user knows themselves)
+- User-stated one-time observations: 0.2 (moderate weight)
+- Block averages: 0.15 (slightly faster adaptation)
+
+**Why EMA?**
+- Adapts to life changes quickly
+- Doesn't require storing historical data
+- Recent data matters more than old data
+- Smooth updates prevent wild swings
+
+---
+
+## 3. How Auto-Scheduling Works
+
+### 3.1 Task-to-Block Matching
+
+When a task needs scheduling, Mika scores each block:
+
+| Factor | Weight | Description |
+|--------|--------|-------------|
+| Energy match | 30% | Does block energy profile match task energy requirement? |
+| Category match | 25% | Do block categories align with task type? |
+| Historical success | 25% | Have similar tasks been completed in this block? |
+| Duration fit | 20% | Does remaining block time fit the estimated task duration? |
+
+### 3.2 Information Used for Scheduling
+
+**From Energy Patterns:**
+- Best hours for high-energy tasks
+- Days where user tends to have more energy
+- Block-specific energy averages
+
+**From Task Properties:**
+- Energy requirement (high/medium/low)
+- Context tags (@home, @phone, @computer, @errands)
+- Estimated duration
+- Deadline/time constraints
+
+**From User Preferences:**
+- Preferred task batch size
+- Whether they want scheduling confirmations
+- Low energy mode status
+
+### 3.3 Scheduling Flow
+
+1. **New task enters system** (via reminder, inbox, or extraction)
+2. **Check for explicit time** - if user said "at 3pm", use that
+3. **Check for day constraint** - if user said "on Tuesday", scope to that day
+4. **If no constraints**, find best block:
+   - Score all active blocks for current/upcoming days
+   - Pick highest scoring block with available capacity
+   - If `confirmScheduling` preference is true, ask user
+   - Otherwise, auto-assign
+
+---
+
+## 4. Activity Blocks
+
+### Default Blocks (created for new users)
+
+| Block | Time | Days | Energy Profile |
+|-------|------|------|----------------|
+| Morning Routine | 7-9am | M-F | low |
+| Focus Time | 9am-12pm | M-F | high |
+| Midday | 12-2pm | M-F | medium |
+| Afternoon | 2-5pm | M-F | medium |
+| Evening | 5-9pm | all | low |
+| Weekend | 9am-6pm | S-S | variable |
+
+### Block Notifications
+
+- **Block start**: Lists tasks assigned to this block
+- **Block end**: Asks how it went, moves incomplete tasks
+- **Energy check**: Mid-block check-in (configurable frequency)
+
+---
+
+## 5. Data Models
+
+### ActivityBlock
+```typescript
+interface ActivityBlock {
+  id: string;
+  chatId: number;
+  name: string;
+  startTime: string;               // "HH:MM"
+  endTime: string;
+  days: DayOfWeek[];
+  energyProfile: "high" | "medium" | "low" | "variable";
+  taskCategories: string[];
+  flexLevel: "fixed" | "flexible" | "soft";
+  isDefault: boolean;
+  status: "active" | "paused";
+}
+```
+
+### EnergyLog
+```typescript
+interface EnergyLog {
+  id: string;
+  chatId: number;
+  timestamp: number;
+  level: 1 | 2 | 3 | 4 | 5;
+  context?: string;
+  blockId?: string;
+  createdAt: number;
+}
+```
+
+### CapturedItem (for task extraction)
 ```typescript
 interface CapturedItem {
   id: string;
@@ -78,219 +197,62 @@ interface CapturedItem {
   extractedTasks?: ExtractedTask[];
   processingStatus: "pending" | "processed" | "confirmed" | "rejected";
   createdAt: number;
-  processedAt?: number;
 }
 
 interface ExtractedTask {
   content: string;
   suggestedEnergyLevel?: "high" | "medium" | "low";
-  suggestedContextTags?: string[];     // @home, @computer, @errands
-  suggestedDecomposition?: string[];   // Subtasks for complex items
-  confidence: number;                   // 0-1
-}
-```
-
-### TaskV2 (extends existing Task)
-```typescript
-interface TaskV2 extends Task {
-  // Existing fields from Task...
-
-  // New v2 fields
-  energyRequired: "high" | "medium" | "low";
-  contextTags: string[];               // @home, @computer, @errands, @phone
-  parentTaskId?: string;               // For decomposition
-  childTaskIds?: string[];
-  blockAssignment?: string;            // Assigned block ID
-  estimatedMinutes?: number;
-  actualMinutes?: number;              // Tracked after completion
-  source: "manual" | "extracted" | "recurring";
-  decompositionLevel: number;          // 0 = top-level
-  snoozeCount: number;
-}
-```
-
-### UserPreferencesV2 (extends existing)
-```typescript
-interface UserPreferencesV2 extends UserPreferences {
-  // Existing fields...
-
-  // New v2 fields
-  defaultBlocks: string[];             // IDs of default activity blocks
-  autoExtractTasks: boolean;           // default: true
-  confirmBreakdowns: boolean;          // default: true
-  confirmScheduling: boolean;          // default: true
-  energyCheckFrequency: "per_block" | "morning_evening" | "manual";
-  transitionNudges: boolean;
-  weeklyPlanningDay: DayOfWeek;        // default: sunday
-  weeklyPlanningTime: string;
-  preferredTaskBatchSize: number;      // default: 3
-  lowEnergyMode: boolean;
-  learningEnabled: boolean;
-
-  // Vacation mode
-  vacationMode: boolean;               // Pauses all block notifications
-  vacationUntil?: number;              // Auto-resume date (optional)
+  suggestedContextTags?: string[];
+  suggestedDecomposition?: string[];
+  confidence: number;
 }
 ```
 
 ---
 
-## 2. Redis Schema Additions
+## 6. Intent Types
 
-```
-# Activity Blocks
-block:{chatId}:{blockId} → ActivityBlock JSON
-blocks:{chatId} → Set of block IDs
-
-# Energy Tracking
-energy_log:{chatId}:{logId} → EnergyLog JSON (TTL: 90 days)
-energy_logs:{chatId}:{date} → Set of log IDs for that day
-energy_pattern:{chatId} → EnergyPattern JSON
-
-# Capture Processing
-captured:{chatId}:{capturedId} → CapturedItem JSON (TTL: 24h)
-captured_pending:{chatId} → Set of pending captured IDs
-
-# Block-Task Assignment
-block_tasks:{chatId}:{blockId}:{date} → Sorted set of task IDs
-current_block:{chatId} → Current active block ID
-
-# Patterns & Learning
-task_patterns:{chatId} → JSON of learned task patterns
-routine_candidates:{chatId} → Set of potential routine patterns
-
-# State
-weekly_planning_pending:{chatId} → "1" if weekly planning session pending
-```
-
----
-
-## 3. New Intent Types
-
-### Capture
+### Energy Intents
 ```typescript
-{ type: "capture"; rawContent: string }
-{ type: "confirm_extraction"; acceptedIndices: number[]; modifications?: {...} }
-{ type: "decompose_task"; taskDescription?: string }
-```
-
-### Blocks
-```typescript
-{ type: "show_blocks" }
-{ type: "show_block"; blockName?: string }
-{ type: "assign_block"; taskDescription: string; blockName: string }
-{ type: "modify_block"; blockName: string; action: "create"|"edit"|"delete"|"pause"|"resume" }
-{ type: "block_transition"; action: "start"|"end"|"skip"|"extend" }
-```
-
-### Energy
-```typescript
+// Explicit logging
 { type: "energy_log"; level: 1-5; context?: string }
-{ type: "energy_match"; currentEnergy?: "high"|"medium"|"low" }
+
+// Conversational observation (picked up from chat)
+{ type: "energy_observation";
+  timeOfDay?: "morning" | "midday" | "afternoon" | "evening" | "night";
+  dayOfWeek?: DayOfWeek;
+  energyLevel: "high" | "medium" | "low";
+  isPattern: boolean;  // true if user says "usually", "always", etc.
+  originalMessage: string;
+}
+
+// Mode toggles
 { type: "low_energy_mode"; enabled: boolean }
 { type: "show_energy_patterns" }
 ```
 
-### Vacation Mode
+### Block Intents
 ```typescript
+{ type: "show_blocks" }
+{ type: "show_block"; blockName?: string }
+{ type: "modify_block"; blockName: string; action: "create"|"edit"|"delete"|"pause"|"resume" }
 { type: "vacation_mode"; action: "start"|"end"; until?: string }
 ```
-- Pauses all block notifications and energy checks
-- Timed reminders still work (appointments don't stop for vacation)
-- Optional auto-resume date
-- Learning paused during vacation (don't skew patterns)
 
-### Planning
+### Capture Intents
 ```typescript
-{ type: "weekly_planning"; action: "start"|"continue"|"complete"|"skip" }
-{ type: "day_planning"; action: "start"|"review"|"adjust" }
-{ type: "batch_tasks"; taskDescriptions?: string[] }
-```
-
-### Context
-```typescript
-{ type: "context_tag"; taskDescription: string; tags: string[] }
-{ type: "filter_by_context"; tags: string[] }
+{ type: "capture"; rawContent: string }
+{ type: "confirm_extraction"; acceptedIndices: number[]; modifications?: {...} }
 ```
 
 ---
 
-## 4. Core Algorithms
-
-### Task Extraction from Unstructured Input
-
-```
-User: "ugh need to call the vet about Luna, also mom's birthday
-       next week, and the sink is still dripping"
-
-Bot extracts:
-1. "Call vet about Luna" (medium energy, @phone)
-2. "Get birthday card for mom" (low energy, @errands, deadline ~1wk)
-3. "Fix/call about sink" (asks: DIY or call someone?)
-
-Bot confirms before creating tasks.
-```
-
-**Extraction process:**
-1. Identify task-like segments (action verbs, obligations, commitments)
-2. For each segment: determine content, temporal hints, energy estimate, context tags
-3. Score confidence (clear action verbs = high, vague = lower)
-4. Confirm with user before creating
-
-### Energy Pattern Learning
-
-```typescript
-// Exponential moving average for learning
-function updateEnergyPatterns(chatId, newLog) {
-  const pattern = await getEnergyPattern(chatId);
-  const hour = new Date(newLog.timestamp).getHours();
-  const dayOfWeek = getDayOfWeek(newLog.timestamp);
-
-  // Update hourly average (learning rate: 0.1)
-  pattern.hourlyAverages[hour] = exponentialMovingAverage(
-    pattern.hourlyAverages[hour], newLog.level, 0.1
-  );
-
-  // Update day-of-week average
-  pattern.dayOfWeekAverages[dayOfWeek] = exponentialMovingAverage(
-    pattern.dayOfWeekAverages[dayOfWeek], newLog.level, 0.1
-  );
-
-  // Update block average if applicable
-  if (newLog.blockId) {
-    pattern.blockAverages[newLog.blockId] = exponentialMovingAverage(
-      pattern.blockAverages[newLog.blockId] || 3, newLog.level, 0.15
-    );
-  }
-}
-```
-
-### Task-to-Block Matching
-
-Score each block for a task based on:
-- **Energy match** (task requirement vs block profile): 30%
-- **Category match** (task tags vs block categories): 25%
-- **Historical success rate**: 25%
-- **Duration fit**: 20%
-
-### Routine Detection
-
-After 7 days of usage, identify:
-- Tasks that recur 3+ times
-- With consistent timing (within 2-hour window)
-- On consistent days
-- Suggest making them official routines
-- Refine weekly
-
----
-
-## 5. User Flows
+## 7. User Flows
 
 ### Daily Flow
-
 ```
-=== MORNING REVIEW (enhanced) ===
-"Morning 🐾
+=== MORNING REVIEW ===
+"Morning
 
 **Morning Routine** (now-9am):
 - Check prescription (@phone) - low energy
@@ -305,41 +267,16 @@ After 7 days of usage, identify:
 "Focus Time wrapping up. How'd it go?"
 → Track completions, carry forward remaining
 
-=== ENERGY CHECK (mid-block or configured) ===
+=== ENERGY CHECK ===
 "Quick energy check? (1-5)"
 → If low: "Want to switch to low-energy mode?"
-
-=== EVENING CHECK-IN ===
-"How'd today feel? (1-5)"
-→ Summarize completions, no shame for what's left
-```
-
-### Weekly Planning Flow
-
-```
-"Sunday wind-down 🐾
-
-**Carrying over:**
-- Email draft (started)
-- Research laptop
-
-**This week:**
-- Mom's birthday card - mail by Thursday
-- Dentist Tuesday 2pm
-
-**Patterns noticed:**
-- Tuesdays: good focus energy
-- Thursday afternoons: lower energy
-
-Want to rough-slot these into the week?"
 ```
 
 ### Capture Flow
-
 ```
-User dumps: "so much stuff ugh. vet call, mom birthday, sink dripping"
+User: "so much stuff ugh. vet call, mom birthday, sink dripping"
 
-Bot: "Caught that 🐾
+Mika: "Caught that
 
 Found a few things:
 1. Call vet about Luna (@phone)
@@ -350,113 +287,79 @@ These look right?"
 
 User: "yeah call someone for sink"
 
-Bot: "Got it. Want me to suggest when to tackle these?"
+Mika: "Got it. Want me to suggest when to tackle these?"
 ```
 
 ---
 
-## 6. Default Activity Blocks
+## 8. Redis Schema
 
-| Block | Time | Days | Energy | Categories |
-|-------|------|------|--------|------------|
-| Morning Routine | 7-9am | M-F | low | personal, routine |
-| Focus Time | 9am-12pm | M-F | high | work, creative |
-| Midday | 12-2pm | M-F | medium | errands, calls, admin |
-| Afternoon | 2-5pm | M-F | medium | work, admin |
-| Evening | 5-9pm | all | low | personal, relaxation |
-| Weekend | 9am-6pm | S-S | variable | personal, projects |
+```
+# Activity Blocks
+{prefix}block:{chatId}:{blockId} → ActivityBlock JSON
+{prefix}blocks:{chatId} → Set of block IDs
 
-Blocks are:
-- Customizable per user
-- Can be paused/skipped individually
-- Flex based on actual wake time (hybrid model)
+# Energy Tracking
+{prefix}energy_log:{chatId}:{logId} → EnergyLog JSON (TTL: 90 days)
+{prefix}energy_logs:{chatId}:{date} → Set of log IDs for that day
+{prefix}energy_pattern:{chatId} → EnergyPattern JSON
 
-### Vacation Mode
-- "I'm on vacation" → pauses all block notifications
-- Timed reminders (appointments) still fire
-- Optional: "back on Monday" → auto-resume
-- Learning paused during vacation (prevents skewed patterns)
-- Simple toggle: "vacation mode on/off"
+# Capture Processing
+{prefix}captured:{chatId}:{capturedId} → CapturedItem JSON (TTL: 24h)
+{prefix}captured_pending:{chatId} → Set of pending captured IDs
 
----
+# Block-Task Assignment
+{prefix}block_tasks:{chatId}:{blockId}:{date} → Set of task IDs
+{prefix}current_block:{chatId} → Current active block ID
+```
 
-## 7. Notification Changes
-
-### Hybrid Reminder System
-
-Keep both systems - some tasks need specific times, others fit into blocks:
-
-**Timed Reminders (existing v1 behavior)**
-- Tasks with specific times still get individual notifications
-- "Dentist at 2pm" → reminder at 2pm (unchanged)
-- Escalating nags for important timed tasks (unchanged)
-
-**Block-Based Notifications (new)**
-- **Block start**: "Focus Time starting. Here's what's slotted..."
-- **Mid-block energy check**: "Quick energy check? (1-5)"
-- **Block transition**: "Focus Time ending. Any wins? Afternoon block next."
-- Tasks without specific times live in blocks
-
-**Task Assignment**
-- `blockAssignment` field = task lives in a block (no specific time)
-- `nextReminder` field = task has specific time (existing behavior)
-- Task can have both (timed reminder + block context)
-
-### Energy-Aware Suggestions
-- Low energy detected → suggest low-energy tasks only
-- High energy → offer challenging tasks
-- Variable → ask what they feel like
+Note: `{prefix}` is set via `REDIS_KEY_PREFIX` env var to support multiple bot instances sharing the same Redis database.
 
 ---
 
-## 8. Migration Strategy
+## 9. Environment Variables
 
-1. **Create default blocks** for existing users
-2. **Migrate existing tasks** → infer energy level from content
-3. **Extend preferences** with new v2 fields (conservative defaults)
-4. **Initialize empty patterns** (learn over time)
-5. **Feature gates** unlock progressively:
-   - Task extraction: after 5 messages
-   - Energy tracking: after first log
-   - Pattern learning: after 7 days (weekly adjustment cycle)
-   - Weekly planning: after 1 week
-   - Routine detection: after 7 days (refine weekly)
-
-### Learning Cycle
-- **Week 1**: Collect baseline data, start making initial suggestions
-- **Weekly adjustment**: Every Sunday, recalculate patterns based on past week
-- **Continuous learning**: Exponential moving average favors recent data
-- Faster adaptation - responds to life changes quickly
+| Variable | Description |
+|----------|-------------|
+| `REDIS_KEY_PREFIX` | Prefix for all Redis keys (e.g., "v2:") |
+| `BRAINTRUST_PROJECT_ID` | Braintrust project for LLM tracing |
+| `BRAINTRUST_PROJECT_NAME` | Fallback if no project ID |
+| `OPENROUTER_MODEL_CHAT` | Model for conversations |
+| `OPENROUTER_MODEL_INTENT` | Model for intent parsing |
+| `USER_TIMEZONE` | User's timezone for scheduling |
 
 ---
 
-## 9. ADHD Design Principles
+## 10. ADHD Design Principles
 
 1. **Minimize friction**: Voice dumps always accepted, messy input encouraged
 2. **Reduce decisions**: Max 3 options shown, suggest don't demand
 3. **Build structure gradually**: Start minimal, introduce as user engages
 4. **Support variable energy**: Always offer low-energy alternatives
 5. **No shame**: Track patterns not failures, dropping tasks is valid
+6. **Learn passively**: Pick up preferences from conversation, don't require explicit configuration
 
 ---
 
-## 10. Files to Modify
+## 11. Implementation Status
 
-| File | Changes |
-|------|---------|
-| `lib/types.ts` | Add ActivityBlock, EnergyLog, EnergyPattern, CapturedItem, TaskV2, UserPreferencesV2 |
-| `lib/redis.ts` | Add CRUD for blocks, energy logs, patterns, captured items |
-| `lib/llm.ts` | Add task extraction prompts, energy-aware generation, block suggestions |
-| `api/telegram.ts` | Add new intent handlers, update morning review, capture flow |
-| `api/notify.ts` | Add block-based notifications, energy checks, transitions |
+### Completed
+- Data models and types
+- Redis CRUD operations with key prefix support
+- Energy logging (explicit and conversational)
+- Energy pattern learning with EMA
+- Task extraction from unstructured input
+- Activity blocks with default templates
+- Block notifications (start/end/energy check)
+- Vacation mode
 
----
+### In Progress
+- Task-to-block assignment
+- Block modifications
+- Weekly planning flow
 
-## 11. Implementation Order
-
-1. **Foundation**: Data models, Redis schema, block CRUD
-2. **Energy Tracking**: EnergyLog, logging intent, pattern storage
-3. **Zero-Friction Capture**: CapturedItem, extraction, confirmation flow
-4. **Block-Based Planning**: Task assignment, block notifications, transitions
-5. **Pattern Learning**: Energy learning, success tracking, routine detection
-6. **Weekly Planning**: Planning flow, week view, batching
+### Planned
+- Routine detection
+- Task decomposition
+- Context filtering
+- Duration tracking and learning

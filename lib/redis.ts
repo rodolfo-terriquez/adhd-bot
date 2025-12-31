@@ -1368,6 +1368,58 @@ export async function updateEnergyPattern(
   await saveEnergyPattern(chatId, pattern);
 }
 
+// Record user-stated energy preference (from casual conversation)
+// Uses higher alpha (stronger weight) since explicit user statements are more reliable
+export async function recordEnergyPreference(
+  chatId: number,
+  options: {
+    timeOfDay?: "morning" | "midday" | "afternoon" | "evening" | "night";
+    dayOfWeek?: DayOfWeek;
+    energyLevel: "high" | "medium" | "low";
+    isPattern: boolean; // Patterns get even stronger weight
+  },
+): Promise<void> {
+  const pattern = await getEnergyPattern(chatId);
+
+  // Convert energy level to numeric (1-5 scale)
+  const levelMap = { low: 2, medium: 3, high: 4 };
+  const numericLevel = levelMap[options.energyLevel];
+
+  // Use stronger alpha for user-stated preferences (0.3 for patterns, 0.2 for one-time observations)
+  const alpha = options.isPattern ? 0.3 : 0.2;
+
+  // Map time of day to hour ranges for updating hourly averages
+  const timeToHours: Record<string, number[]> = {
+    morning: [6, 7, 8, 9, 10],
+    midday: [11, 12, 13],
+    afternoon: [14, 15, 16, 17],
+    evening: [18, 19, 20, 21],
+    night: [22, 23, 0, 1, 2],
+  };
+
+  if (options.timeOfDay) {
+    const hours = timeToHours[options.timeOfDay];
+    for (const hour of hours) {
+      pattern.hourlyAverages[hour] = exponentialMovingAverage(
+        pattern.hourlyAverages[hour],
+        numericLevel,
+        alpha,
+      );
+    }
+  }
+
+  if (options.dayOfWeek) {
+    pattern.dayOfWeekAverages[options.dayOfWeek] = exponentialMovingAverage(
+      pattern.dayOfWeekAverages[options.dayOfWeek],
+      numericLevel,
+      alpha,
+    );
+  }
+
+  pattern.dataPoints++;
+  await saveEnergyPattern(chatId, pattern);
+}
+
 export function predictEnergy(
   pattern: EnergyPattern,
   hour: number,

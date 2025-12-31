@@ -12,6 +12,7 @@ import type {
   EnergyLogIntent,
   LowEnergyModeIntent,
   ShowEnergyPatternsIntent,
+  EnergyObservationIntent,
   ShowBlocksIntent,
   ShowBlockIntent,
   VacationModeIntent,
@@ -351,6 +352,9 @@ async function handleIntent(
 
     case "show_energy_patterns":
       return await handleShowEnergyPatterns(chatId, context, skipSend);
+
+    case "energy_observation":
+      return await handleEnergyObservation(chatId, intent, context, skipSend);
 
     case "show_blocks":
       return await handleShowBlocks(chatId, context, skipSend);
@@ -1787,6 +1791,39 @@ async function handleEnergyLog(
       type: "energy_logged",
       level: intent.level,
       context: intent.context,
+    },
+    context,
+  );
+  if (!skipSend) {
+    await telegram.sendMessage(chatId, response);
+  }
+  return response;
+}
+
+async function handleEnergyObservation(
+  chatId: number,
+  intent: EnergyObservationIntent,
+  context: ConversationContext,
+  skipSend: boolean = false,
+): Promise<string> {
+  // Record the energy preference/observation
+  await redis.recordEnergyPreference(chatId, {
+    timeOfDay: intent.timeOfDay,
+    dayOfWeek: intent.dayOfWeek,
+    energyLevel: intent.energyLevel,
+    isPattern: intent.isPattern,
+  });
+
+  // Generate a conversational response that acknowledges we noted this
+  // but doesn't make it feel like a formal "logged" action
+  const response = await generateActionResponse(
+    {
+      type: "energy_observation_noted",
+      timeOfDay: intent.timeOfDay,
+      dayOfWeek: intent.dayOfWeek,
+      energyLevel: intent.energyLevel,
+      isPattern: intent.isPattern,
+      originalMessage: intent.originalMessage,
     },
     context,
   );

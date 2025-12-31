@@ -307,6 +307,26 @@ ENERGY TRACKING:
     Examples: "energy 3", "feeling like a 4", "low energy right now" → level 2
     "pretty energized" → level 4, "exhausted" → level 1, "doing okay" → level 3
 
+  energy_observation → {"type":"energy_observation","timeOfDay":"...","dayOfWeek":"...","energyLevel":"high|medium|low","isPattern":bool,"originalMessage":"..."}
+    Use this when user CASUALLY mentions energy patterns or preferences in conversation.
+    This captures implicit information the user shares naturally, not explicit logging.
+
+    timeOfDay: "morning", "midday", "afternoon", "evening", "night" (optional)
+    dayOfWeek: "monday", "tuesday", etc. (optional)
+    energyLevel: infer from words like "energized/productive/focused" → "high", "tired/sluggish/drained" → "low", "okay/decent" → "medium"
+    isPattern: true if user says "usually", "always", "tend to", "typically", "most days" (general pattern)
+              false if describing current/recent state without pattern words
+    originalMessage: copy the user's exact message
+
+    Examples:
+      "I usually feel energized in the evenings" → {"type":"energy_observation","timeOfDay":"evening","energyLevel":"high","isPattern":true,"originalMessage":"I usually feel energized in the evenings"}
+      "Mornings are rough for me" → {"type":"energy_observation","timeOfDay":"morning","energyLevel":"low","isPattern":true,"originalMessage":"Mornings are rough for me"}
+      "I'm more productive on Tuesdays" → {"type":"energy_observation","dayOfWeek":"tuesday","energyLevel":"high","isPattern":true,"originalMessage":"I'm more productive on Tuesdays"}
+      "Feeling pretty drained this afternoon" → {"type":"energy_observation","timeOfDay":"afternoon","energyLevel":"low","isPattern":false,"originalMessage":"Feeling pretty drained this afternoon"}
+
+    IMPORTANT: Prefer energy_observation over conversation when user mentions energy/productivity patterns.
+    This helps learn their preferences for better task scheduling.
+
   low_energy_mode → {"type":"low_energy_mode","enabled":bool}
     "low energy mode", "I'm dragging" → enabled:true
     "feeling better", "energy back" → enabled:false
@@ -990,6 +1010,14 @@ export type ActionContext =
   | { type: "conversation"; message: string }
   // V2 Action Contexts
   | { type: "energy_logged"; level: 1 | 2 | 3 | 4 | 5; context?: string }
+  | {
+      type: "energy_observation_noted";
+      timeOfDay?: "morning" | "midday" | "afternoon" | "evening" | "night";
+      dayOfWeek?: string;
+      energyLevel: "high" | "medium" | "low";
+      isPattern: boolean;
+      originalMessage: string;
+    }
   | { type: "low_energy_mode_set"; enabled: boolean }
   | {
       type: "energy_patterns_shown";
@@ -1192,6 +1220,18 @@ export async function generateActionResponse(
       const energyDescriptions = ["exhausted", "low", "okay", "good", "energized"];
       prompt = `The user logged their energy as ${actionContext.level}/5 (${energyDescriptions[actionContext.level - 1]})${actionContext.context ? ` with context: "${actionContext.context}"` : ""}. Acknowledge briefly and maybe offer a relevant suggestion based on their energy level.`;
       break;
+    case "energy_observation_noted": {
+      // This is a conversational energy observation - respond naturally while subtly acknowledging we noted it
+      const timeDesc = actionContext.timeOfDay ? `in the ${actionContext.timeOfDay}` : "";
+      const dayDesc = actionContext.dayOfWeek ? `on ${actionContext.dayOfWeek}s` : "";
+      const patternType = actionContext.isPattern ? "general pattern" : "current observation";
+      prompt = `The user casually mentioned: "${actionContext.originalMessage}"
+
+This is an energy ${patternType} - they tend to have ${actionContext.energyLevel} energy ${timeDesc} ${dayDesc}.
+I've noted this to help with scheduling. Respond conversationally to what they said (NOT formally acknowledging "I logged your preference").
+Just engage naturally with what they shared, maybe with a brief acknowledgment that this is helpful to know.`;
+      break;
+    }
     case "low_energy_mode_set":
       prompt = actionContext.enabled
         ? `The user turned on low-energy mode. They're running low. Acknowledge warmly and let them know I'll only suggest easier tasks.`
@@ -1342,6 +1382,8 @@ Generate a response to acknowledge an action. Be warm but brief. For task lists,
       // V2 fallbacks
       case "energy_logged":
         return `Logged your energy as ${actionContext.level}/5.`;
+      case "energy_observation_noted":
+        return `Good to know about your ${actionContext.energyLevel} energy${actionContext.timeOfDay ? ` in the ${actionContext.timeOfDay}` : ""}. I'll keep that in mind for scheduling.`;
       case "low_energy_mode_set":
         return actionContext.enabled
           ? `Low-energy mode is on. I'll suggest easier tasks.`
