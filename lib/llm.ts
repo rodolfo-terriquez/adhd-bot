@@ -14,7 +14,7 @@ import type { ConversationMessage } from "./redis.js";
 
 // Initialize Braintrust logger for tracing
 const logger = initLogger({
-  projectName: "Tama ADHD Bot",
+  projectName: process.env.BRAINTRUST_PROJECT_NAME || "Tama ADHD Bot",
   apiKey: process.env.BRAINTRUST_API_KEY,
 });
 
