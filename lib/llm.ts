@@ -635,6 +635,13 @@ export interface MorningReviewData {
   inboxItems: { content: string }[];
   overdueTasks: { content: string; overdueTime: string }[];
   todaysTasks?: { content: string; scheduledTime: string }[];
+  // V2: Energy-based insights
+  energyInsights?: {
+    predictedMorningEnergy: "high" | "medium" | "low";
+    predictedAfternoonEnergy: "high" | "medium" | "low";
+    bestTimeForHardTasks?: string;  // e.g., "Focus Time (9am-12pm)"
+    dataPoints: number;  // How much data we have to base predictions on
+  };
 }
 
 export async function generateMorningReviewMessage(
@@ -667,7 +674,18 @@ export async function generateMorningReviewMessage(
     const overdueList = data.overdueTasks
       .map((t) => `- ${t.content} (${t.overdueTime})`)
       .join("\n");
-    dataSection += `Overdue reminders (${data.overdueTasks.length}):\n${overdueList}`;
+    dataSection += `Overdue reminders (${data.overdueTasks.length}):\n${overdueList}\n\n`;
+  }
+
+  // Add energy insights if available
+  let energySection = "";
+  if (data.energyInsights && data.energyInsights.dataPoints >= 3) {
+    energySection = `Based on patterns I've learned:\n`;
+    energySection += `- Morning energy tends to be ${data.energyInsights.predictedMorningEnergy}\n`;
+    energySection += `- Afternoon energy tends to be ${data.energyInsights.predictedAfternoonEnergy}\n`;
+    if (data.energyInsights.bestTimeForHardTasks) {
+      energySection += `- Best time for harder tasks: ${data.energyInsights.bestTimeForHardTasks}\n`;
+    }
   }
 
   const systemPrompt = `${MIKA_PERSONALITY}
@@ -677,11 +695,13 @@ Generate a gentle morning review message. This is a daily invitation for the use
 - Maybe schedule some inbox items (turn them into reminders with specific times or days)
 - Decide what to do with overdue items: reschedule them, mark them done, or drop them entirely
 
+${energySection ? `I've learned some of their energy patterns. Casually weave in a subtle suggestion about when might be good for different types of tasks based on their patterns. Don't be formal about it, just a friendly observation.` : ""}
+
 Keep it warm and low-pressure. This is an invitation, not a demand. Frame it as "in case you want to" or "whenever you're ready." List the items clearly so they can see what's there. Dropping items is always a valid choice. Keep your intro/outro brief, but do show the full lists. Group items by the list they belong to so it's easy for the user to scan.`;
 
   const hasAnyItems = hasTodaysTasks || hasInbox || hasOverdue;
   const taskPrompt = hasAnyItems
-    ? `Generate a morning review message with the following items:\n\n${dataSection}`
+    ? `Generate a morning review message with the following items:\n\n${dataSection}${energySection}`
     : "Generate a brief morning greeting. There are no inbox items or overdue tasks right now.";
 
   const response = await client.chat.completions.create({
@@ -1062,7 +1082,19 @@ export type ActionContext =
       count: number;
       tasks: string[];
     }
-  | { type: "extraction_cancelled" };
+  | {
+      type: "tasks_confirmed_with_suggestions";
+      count: number;
+      tasks: string[];
+      suggestions: Array<{ task: string; suggestion: string }>;
+    }
+  | { type: "extraction_cancelled" }
+  | {
+      type: "energy_match_results";
+      currentEnergy: string;
+      matchingTasks: string[];
+      hasNoTasks: boolean;
+    };
 
 export async function generateActionResponse(
   actionContext: ActionContext,
@@ -1287,6 +1319,29 @@ Just engage naturally with what they shared, maybe with a brief acknowledgment t
       prompt = `Great! The user confirmed ${actionContext.count} task(s):\n${confirmedList}\n\nAcknowledge that these have been added. Be warm but brief.`;
       break;
     }
+    case "tasks_confirmed_with_suggestions": {
+      const confirmedList = actionContext.tasks.map((t) => `- ${t}`).join("\n");
+      const suggestionsList = actionContext.suggestions
+        .map((s) => `- "${s.task}" → ${s.suggestion}`)
+        .join("\n");
+      prompt = `Great! The user confirmed ${actionContext.count} task(s):\n${confirmedList}\n\n${
+        actionContext.suggestions.length > 0
+          ? `Based on their energy patterns, here are some scheduling suggestions:\n${suggestionsList}\n\nAcknowledge the tasks were added, then casually mention when might be good times to tackle them based on these suggestions. Don't be too formal about it.`
+          : `Acknowledge that these have been added. Be warm but brief.`
+      }`;
+      break;
+    }
+    case "energy_match_results": {
+      if (actionContext.hasNoTasks) {
+        prompt = `The user asked what tasks match their current ${actionContext.currentEnergy} energy, but they don't have any pending tasks right now. Let them know warmly.`;
+      } else if (actionContext.matchingTasks.length === 0) {
+        prompt = `The user's energy is ${actionContext.currentEnergy} but none of their pending tasks seem like a great match for that energy level right now. Acknowledge this and maybe suggest they could use this time for something else or pick something anyway.`;
+      } else {
+        const taskList = actionContext.matchingTasks.map((t) => `- ${t}`).join("\n");
+        prompt = `The user's energy is ${actionContext.currentEnergy}. These tasks seem like a good match:\n${taskList}\n\nPresent these as options, not demands. Be casual about it.`;
+      }
+      break;
+    }
     case "extraction_cancelled":
       prompt = `The user decided not to add the extracted tasks. Acknowledge this casually - it's totally fine to change their mind.`;
       break;
@@ -1411,6 +1466,20 @@ Generate a response to acknowledge an action. Be warm but brief. For task lists,
         return `Hmm, I couldn't find any clear tasks in there. What specifically do you need to do?`;
       case "tasks_confirmed":
         return `Added ${actionContext.count} task(s) 🐾`;
+      case "tasks_confirmed_with_suggestions": {
+        const base = `Added ${actionContext.count} task(s) 🐾`;
+        if (actionContext.suggestions.length > 0) {
+          const suggestionText = actionContext.suggestions
+            .map((s) => `${s.task} → ${s.suggestion}`)
+            .join("; ");
+          return `${base}\n\nGood times to tackle these: ${suggestionText}`;
+        }
+        return base;
+      }
+      case "energy_match_results":
+        if (actionContext.hasNoTasks) return `No pending tasks right now.`;
+        if (actionContext.matchingTasks.length === 0) return `Nothing seems like a perfect match for ${actionContext.currentEnergy} energy right now.`;
+        return `For ${actionContext.currentEnergy} energy:\n${actionContext.matchingTasks.map((t) => `- ${t}`).join("\n")}`;
       case "extraction_cancelled":
         return `No worries, dropped those.`;
     }

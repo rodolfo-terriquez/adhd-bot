@@ -287,11 +287,13 @@ async function handleMorningReview(
 ): Promise<void> {
   const { chatId } = payload;
 
-  // Get inbox items, overdue tasks, and today's tasks
-  const [inboxItems, overdueTasks, todaysTasks] = await Promise.all([
+  // Get inbox items, overdue tasks, today's tasks, and energy patterns
+  const [inboxItems, overdueTasks, todaysTasks, energyPattern, blocks] = await Promise.all([
     redis.getUncheckedInboxItems(chatId),
     redis.getOverdueTasks(chatId),
     redis.getTodaysTasks(chatId),
+    redis.getEnergyPattern(chatId),
+    redis.getActiveBlocks(chatId),
   ]);
 
   // Get conversation context
@@ -309,12 +311,69 @@ async function handleMorningReview(
     scheduledTime: formatScheduledTime(task.nextReminder, task.isDayOnly),
   }));
 
+  // Build energy insights if we have enough data
+  let energyInsights: {
+    predictedMorningEnergy: "high" | "medium" | "low";
+    predictedAfternoonEnergy: "high" | "medium" | "low";
+    bestTimeForHardTasks?: string;
+    dataPoints: number;
+  } | undefined;
+
+  if (energyPattern.dataPoints >= 3) {
+    // Get today's day of week
+    const dayNames: Array<"sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday"> =
+      ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+    const today = dayNames[new Date().getDay()];
+
+    // Predict morning energy (average of hours 8-11)
+    const morningHours = [8, 9, 10, 11];
+    const morningAvg = morningHours.reduce((sum, h) =>
+      sum + (energyPattern.hourlyAverages[h] || 3), 0) / morningHours.length;
+
+    // Predict afternoon energy (average of hours 14-17)
+    const afternoonHours = [14, 15, 16, 17];
+    const afternoonAvg = afternoonHours.reduce((sum, h) =>
+      sum + (energyPattern.hourlyAverages[h] || 3), 0) / afternoonHours.length;
+
+    const toLevel = (avg: number): "high" | "medium" | "low" => {
+      if (avg >= 3.5) return "high";
+      if (avg <= 2.5) return "low";
+      return "medium";
+    };
+
+    // Find best time for hard tasks (highest energy block)
+    let bestTimeForHardTasks: string | undefined;
+    if (blocks.length > 0) {
+      const blockScores = blocks
+        .filter(b => b.days.includes(today) && b.energyProfile !== "low")
+        .map(b => ({
+          block: b,
+          score: energyPattern.blockAverages[b.id] ||
+            (b.energyProfile === "high" ? 4 : 3),
+        }))
+        .sort((a, b) => b.score - a.score);
+
+      if (blockScores.length > 0) {
+        const best = blockScores[0].block;
+        bestTimeForHardTasks = `${best.name} (${best.startTime}-${best.endTime})`;
+      }
+    }
+
+    energyInsights = {
+      predictedMorningEnergy: toLevel(morningAvg),
+      predictedAfternoonEnergy: toLevel(afternoonAvg),
+      bestTimeForHardTasks,
+      dataPoints: energyPattern.dataPoints,
+    };
+  }
+
   // Generate the morning review message
   const message = await generateMorningReviewMessage(
     {
       inboxItems: inboxItems.map((item) => ({ content: item.content })),
       overdueTasks: formattedOverdue,
       todaysTasks: formattedToday,
+      energyInsights,
     },
     context,
   );

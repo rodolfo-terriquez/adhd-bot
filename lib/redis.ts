@@ -13,6 +13,7 @@ import type {
   CapturedItem,
   ExtractedTask,
   DayOfWeek,
+  EnergyLevel,
 } from "./types.js";
 
 let redisClient: Redis | null = null;
@@ -1442,6 +1443,264 @@ export function predictEnergy(
   }
 
   return Math.round(prediction * 10) / 10;
+}
+
+// ==========================================
+// V2: Task-to-Block Scheduling
+// ==========================================
+
+interface TaskSchedulingInfo {
+  content: string;
+  energyRequired?: EnergyLevel;
+  contextTags?: string[];
+  estimatedMinutes?: number;
+}
+
+interface BlockScore {
+  block: ActivityBlock;
+  score: number;
+  reasons: string[];
+}
+
+// Convert energy level string to numeric value
+function energyToNumeric(level: EnergyLevel | undefined): number {
+  switch (level) {
+    case "high": return 4;
+    case "medium": return 3;
+    case "low": return 2;
+    case "variable": return 3;
+    default: return 3; // Default to medium
+  }
+}
+
+// Score how well a block matches a task's energy requirement
+function scoreEnergyMatch(
+  taskEnergy: EnergyLevel | undefined,
+  blockEnergy: EnergyLevel,
+  predictedEnergy: number,
+): { score: number; reason: string } {
+  const taskNumeric = energyToNumeric(taskEnergy);
+  const blockNumeric = energyToNumeric(blockEnergy);
+
+  // If block is "variable", use predicted energy instead
+  const effectiveBlockEnergy = blockEnergy === "variable" ? predictedEnergy : blockNumeric;
+
+  // Calculate how close the match is (0-1 scale)
+  const diff = Math.abs(taskNumeric - effectiveBlockEnergy);
+  const score = Math.max(0, 1 - (diff / 3)); // 3 is max possible difference
+
+  let reason = "";
+  if (score > 0.8) {
+    reason = "energy match";
+  } else if (taskNumeric > effectiveBlockEnergy) {
+    reason = "might need more energy";
+  } else {
+    reason = "energy might be wasted on easy task";
+  }
+
+  return { score, reason };
+}
+
+// Score how well a block's categories match task context tags
+function scoreCategoryMatch(
+  taskTags: string[] | undefined,
+  blockCategories: string[],
+): { score: number; reason: string } {
+  if (!taskTags || taskTags.length === 0) {
+    return { score: 0.5, reason: "no context tags" }; // Neutral score
+  }
+
+  // Normalize tags (remove @ prefix if present)
+  const normalizedTags = taskTags.map(t => t.replace(/^@/, "").toLowerCase());
+  const normalizedCategories = blockCategories.map(c => c.toLowerCase());
+
+  // Count matches
+  const matches = normalizedTags.filter(tag =>
+    normalizedCategories.some(cat => cat.includes(tag) || tag.includes(cat))
+  );
+
+  const score = matches.length / normalizedTags.length;
+  const reason = matches.length > 0
+    ? `matches: ${matches.join(", ")}`
+    : "no category overlap";
+
+  return { score, reason };
+}
+
+// Get the block's time slot for a specific date
+function getBlockTimeSlot(block: ActivityBlock, date: Date): { start: Date; end: Date } | null {
+  const dayNames: DayOfWeek[] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const dayOfWeek = dayNames[date.getDay()];
+
+  if (!block.days.includes(dayOfWeek)) {
+    return null; // Block doesn't run on this day
+  }
+
+  const [startHour, startMin] = block.startTime.split(":").map(Number);
+  const [endHour, endMin] = block.endTime.split(":").map(Number);
+
+  const start = new Date(date);
+  start.setHours(startHour, startMin, 0, 0);
+
+  const end = new Date(date);
+  end.setHours(endHour, endMin, 0, 0);
+
+  return { start, end };
+}
+
+// Score a single block for a task
+export async function scoreBlockForTask(
+  chatId: number,
+  task: TaskSchedulingInfo,
+  block: ActivityBlock,
+  targetDate?: Date,
+): Promise<BlockScore> {
+  const reasons: string[] = [];
+  let totalScore = 0;
+
+  // Get energy pattern for predictions
+  const pattern = await getEnergyPattern(chatId);
+  const date = targetDate || new Date();
+  const timeSlot = getBlockTimeSlot(block, date);
+
+  if (!timeSlot) {
+    return { block, score: 0, reasons: ["block not active on this day"] };
+  }
+
+  // Check if block time has passed
+  const now = new Date();
+  if (date.toDateString() === now.toDateString() && timeSlot.end < now) {
+    return { block, score: 0, reasons: ["block time has passed"] };
+  }
+
+  const dayNames: DayOfWeek[] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const dayOfWeek = dayNames[date.getDay()];
+  const blockMidHour = Math.floor((parseInt(block.startTime) + parseInt(block.endTime)) / 2);
+
+  // Predict energy for this block's time
+  const predictedEnergy = predictEnergy(pattern, blockMidHour, dayOfWeek, block.id);
+
+  // 1. Energy match (30% weight)
+  const energyResult = scoreEnergyMatch(task.energyRequired, block.energyProfile, predictedEnergy);
+  totalScore += energyResult.score * 0.30;
+  if (energyResult.reason) reasons.push(energyResult.reason);
+
+  // 2. Category match (25% weight)
+  const categoryResult = scoreCategoryMatch(task.contextTags, block.taskCategories);
+  totalScore += categoryResult.score * 0.25;
+  if (categoryResult.score > 0.5) reasons.push(categoryResult.reason);
+
+  // 3. Historical success in this block (25% weight)
+  // Use block average energy as proxy for success (higher energy = more gets done)
+  const blockAvg = pattern.blockAverages[block.id];
+  if (blockAvg !== undefined) {
+    const successScore = (blockAvg - 1) / 4; // Normalize 1-5 to 0-1
+    totalScore += successScore * 0.25;
+    if (successScore > 0.6) reasons.push("good track record");
+  } else {
+    totalScore += 0.5 * 0.25; // Neutral score if no data
+    reasons.push("no history yet");
+  }
+
+  // 4. Time availability (20% weight)
+  // For now, assume all blocks have time. In future, could track task assignments
+  totalScore += 0.8 * 0.20;
+
+  return { block, score: totalScore, reasons };
+}
+
+// Find the best block(s) for a task
+export async function suggestBlocksForTask(
+  chatId: number,
+  task: TaskSchedulingInfo,
+  options: {
+    maxSuggestions?: number;
+    daysToCheck?: number;
+    excludeBlockIds?: string[];
+  } = {},
+): Promise<Array<BlockScore & { date: Date }>> {
+  const { maxSuggestions = 3, daysToCheck = 7, excludeBlockIds = [] } = options;
+
+  // Get all active blocks
+  const blocks = await getActiveBlocks(chatId);
+  if (blocks.length === 0) {
+    return [];
+  }
+
+  const allScores: Array<BlockScore & { date: Date }> = [];
+  const today = new Date();
+
+  // Score each block for each day
+  for (let dayOffset = 0; dayOffset < daysToCheck; dayOffset++) {
+    const targetDate = new Date(today);
+    targetDate.setDate(today.getDate() + dayOffset);
+
+    for (const block of blocks) {
+      if (excludeBlockIds.includes(block.id)) continue;
+
+      const score = await scoreBlockForTask(chatId, task, block, targetDate);
+      if (score.score > 0) {
+        allScores.push({ ...score, date: targetDate });
+      }
+    }
+  }
+
+  // Sort by score descending
+  allScores.sort((a, b) => b.score - a.score);
+
+  // Return top suggestions
+  return allScores.slice(0, maxSuggestions);
+}
+
+// Get tasks that match current energy level
+export async function getTasksMatchingEnergy(
+  chatId: number,
+  currentEnergy: EnergyLevel,
+): Promise<Task[]> {
+  const tasks = await getPendingTasks(chatId);
+
+  // Map energy level to a range we consider a "match"
+  const energyRanges: Record<EnergyLevel, EnergyLevel[]> = {
+    high: ["high", "medium"],
+    medium: ["medium", "low"],
+    low: ["low"],
+    variable: ["high", "medium", "low"],
+  };
+
+  const acceptableEnergies = energyRanges[currentEnergy];
+
+  // For now, we don't have energyRequired on tasks, so we'll infer from content
+  // In future, TaskV2 would have this field
+  return tasks.filter(task => {
+    // Simple heuristic: longer/complex tasks = high energy, short/simple = low
+    const wordCount = task.content.split(/\s+/).length;
+    const hasUrgentWords = /urgent|important|deadline|asap/i.test(task.content);
+    const hasEasyWords = /quick|simple|just|check|review/i.test(task.content);
+
+    let inferredEnergy: EnergyLevel = "medium";
+    if (hasUrgentWords || wordCount > 10) inferredEnergy = "high";
+    else if (hasEasyWords || wordCount < 5) inferredEnergy = "low";
+
+    return acceptableEnergies.includes(inferredEnergy);
+  });
+}
+
+// Format a block suggestion for display
+export function formatBlockSuggestion(
+  suggestion: BlockScore & { date: Date },
+  timezone: string = "America/Los_Angeles",
+): string {
+  const dateStr = suggestion.date.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: timezone,
+  });
+
+  const timeRange = `${suggestion.block.startTime}-${suggestion.block.endTime}`;
+  const confidence = Math.round(suggestion.score * 100);
+
+  return `${suggestion.block.name} (${dateStr} ${timeRange}) - ${confidence}% match`;
 }
 
 // ==========================================

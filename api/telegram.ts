@@ -13,6 +13,7 @@ import type {
   LowEnergyModeIntent,
   ShowEnergyPatternsIntent,
   EnergyObservationIntent,
+  EnergyMatchIntent,
   ShowBlocksIntent,
   ShowBlockIntent,
   VacationModeIntent,
@@ -20,6 +21,7 @@ import type {
   CaptureIntent,
   ConfirmExtractionIntent,
   ExtractedTask,
+  EnergyLevel,
 } from "../lib/types.js";
 import * as telegram from "../lib/telegram.js";
 import { transcribeAudio } from "../lib/whisper.js";
@@ -372,12 +374,14 @@ async function handleIntent(
     case "confirm_extraction":
       return await handleConfirmExtraction(chatId, intent, context, skipSend);
 
+    case "energy_match":
+      return await handleEnergyMatch(chatId, intent, context, skipSend);
+
     // V2 intents that are not yet implemented - respond gracefully
     case "decompose_task":
     case "assign_block":
     case "modify_block":
     case "block_transition":
-    case "energy_match":
     case "weekly_planning":
     case "day_planning":
     case "batch_tasks":
@@ -1833,6 +1837,45 @@ async function handleEnergyObservation(
   return response;
 }
 
+async function handleEnergyMatch(
+  chatId: number,
+  intent: EnergyMatchIntent,
+  context: ConversationContext,
+  skipSend: boolean = false,
+): Promise<string> {
+  // Determine current energy - either from intent or infer from patterns
+  let currentEnergy: EnergyLevel = intent.currentEnergy || "medium";
+
+  if (!intent.currentEnergy) {
+    // Try to infer from the latest energy log
+    const latestLog = await redis.getLatestEnergyLog(chatId);
+    if (latestLog) {
+      // Convert 1-5 scale to energy level
+      if (latestLog.level >= 4) currentEnergy = "high";
+      else if (latestLog.level <= 2) currentEnergy = "low";
+      else currentEnergy = "medium";
+    }
+  }
+
+  // Get tasks that match the current energy level
+  const tasks = await redis.getPendingTasks(chatId);
+  const matchingTasks = await redis.getTasksMatchingEnergy(chatId, currentEnergy);
+
+  const response = await generateActionResponse(
+    {
+      type: "energy_match_results",
+      currentEnergy,
+      matchingTasks: matchingTasks.map((t) => t.content),
+      hasNoTasks: tasks.length === 0,
+    },
+    context,
+  );
+  if (!skipSend) {
+    await telegram.sendMessage(chatId, response);
+  }
+  return response;
+}
+
 async function handleLowEnergyMode(
   chatId: number,
   intent: LowEnergyModeIntent,
@@ -2175,8 +2218,15 @@ async function handleConfirmExtraction(
     return response;
   }
 
-  // Create tasks from accepted extractions
+  // Create tasks from accepted extractions and gather scheduling suggestions
   const createdTaskNames: string[] = [];
+  const schedulingSuggestions: Array<{
+    task: string;
+    suggestion: string;
+  }> = [];
+
+  const timezone = process.env.USER_TIMEZONE || "America/Los_Angeles";
+
   for (const extracted of acceptedTasks) {
     // Create as inbox item (no specific time) with v2 metadata
     const task = await redis.createTask(
@@ -2187,9 +2237,25 @@ async function handleConfirmExtraction(
       true, // day-only (no specific time)
     );
 
-    // Note: In a more complete implementation, we'd update the task
-    // with energyRequired, contextTags, etc. For now we're just creating basic tasks.
     createdTaskNames.push(extracted.content);
+
+    // Get scheduling suggestion for this task
+    const suggestions = await redis.suggestBlocksForTask(
+      chatId,
+      {
+        content: extracted.content,
+        energyRequired: extracted.suggestedEnergyLevel,
+        contextTags: extracted.suggestedContextTags,
+      },
+      { maxSuggestions: 1 },
+    );
+
+    if (suggestions.length > 0) {
+      schedulingSuggestions.push({
+        task: extracted.content,
+        suggestion: redis.formatBlockSuggestion(suggestions[0], timezone),
+      });
+    }
   }
 
   // Mark captured item as confirmed
@@ -2199,9 +2265,10 @@ async function handleConfirmExtraction(
 
   const response = await generateActionResponse(
     {
-      type: "tasks_confirmed",
+      type: "tasks_confirmed_with_suggestions",
       count: createdTaskNames.length,
       tasks: createdTaskNames,
+      suggestions: schedulingSuggestions,
     },
     context,
   );
