@@ -1,14 +1,36 @@
 # ADHD Support Telegram Bot
 
-A Telegram bot designed to help manage ADHD through natural language task reminders, voice message transcription, brain dump capture, and intelligent gentle nagging.
+A Telegram bot designed to help manage ADHD through natural language task reminders, voice message transcription, brain dump capture, habits tracking, energy awareness, and intelligent gentle nagging. Powered by "Mika", a warm cat-girl companion who helps without judgment.
 
 ## Features
 
+### Core Features
 - **Voice Message Transcription**: Send voice notes for hands-free interaction using OpenAI Whisper
-- **Natural Language Reminders**: "Remind me to call the dentist in 2 hours"
+- **Natural Language Reminders**: "Remind me to call the dentist in 2 hours" or "Doctor appointment on Tuesday"
 - **Brain Dump Capture**: Quickly capture thoughts with daily summaries
 - **Smart Gentle Nagging**: Escalating reminders for important tasks until done
-- **Daily Summaries**: Get a recap of your thoughts and pending tasks
+- **Inbox System**: Capture items without a specific time - they appear in every morning review
+- **Lists**: Create and manage checklists (grocery lists, packing lists, etc.)
+
+### Habits (New!)
+- **Recurring Activities**: Track habits that repeat on specific days
+- **Flexible Scheduling**: Daily, weekdays, weekends, or custom days (Mon/Wed/Fri)
+- **Morning Review Integration**: See today's habits with completion checkboxes
+- **Weekly Stats**: Track habit completion rates in weekly summaries
+
+### Energy & Time Management
+- **Energy Logging**: Track your energy levels throughout the day (1-5 scale)
+- **Energy Patterns**: Learn when you're most productive over time
+- **Activity Blocks**: Define time blocks for different types of work
+- **Energy Matching**: Get task suggestions based on your current energy
+- **Low Energy Mode**: When you're dragging, get only easy tasks suggested
+
+### Daily Rhythms
+- **Morning Review**: Daily summary of habits, tasks, inbox items, and overdue reminders
+- **Daily Check-in**: Evening prompt to rate your day (1-5) with optional notes
+- **Weekly Summary**: Patterns, insights, and habit completion stats
+- **End of Day**: Gentle prompt to capture anything for tomorrow
+- **Vacation Mode**: Pause all notifications when you need a break
 
 ## Tech Stack
 
@@ -81,21 +103,60 @@ curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
 ### Reminders
 - "Remind me to take my meds in 30 minutes"
 - "In 2 hours remind me to call mom"
+- "Doctor appointment on Tuesday" (day-only, shows in morning review)
 - "Important: submit the report by 5pm - nag me" (enables gentle nagging)
+
+### Inbox Items
+- "Buy groceries" (no time = goes to inbox)
+- "Pick up prescription" (appears in every morning review until scheduled or done)
 
 ### Brain Dumps
 - "Dump: random thought about the project"
 - "Note to self: look into that new framework"
 - Just send any stream of consciousness text
 
+### Habits
+- "Add habit: meditate every morning"
+- "I want to exercise on Mon/Wed/Fri"
+- "Habit: take vitamins daily"
+- "Show my habits" / "List habits"
+- "Done with meditation" (marks habit complete for today)
+- "Pause exercise habit" / "Resume meditation"
+- "Remove the reading habit"
+
+### Lists
+- "Create a grocery list: milk, eggs, bread"
+- "Show my lists"
+- "What's in my grocery list?"
+- "Add cheese to the grocery list"
+- "Remove milk from the list"
+- "Check off eggs"
+
+### Energy Tracking
+- "Energy 3" / "Feeling like a 4"
+- "Low energy right now" / "Pretty energized"
+- "Show my energy patterns"
+- "Low energy mode" (only suggests easy tasks)
+- "I usually feel energized in the evenings" (learns patterns)
+
 ### Managing Tasks
 - "Done" - marks the most recent task complete
 - "Finished calling mom" - marks a specific task complete
-- "List tasks" - shows all pending reminders
+- "List tasks" / "Show reminders" - shows all pending reminders
 - "What do I have pending?" - shows tasks
+
+### Settings
+- "Set check-in time to 8pm"
+- "Set morning review to 7am"
+- "Vacation mode" / "I'm on vacation until Monday"
+- "Back from vacation"
 
 ### Voice Messages
 Just send a voice note! The bot will transcribe it and process it like text.
+
+### Debug Commands
+- `/debug` - Export conversation context as markdown file
+- `/schedule` - Export scheduling system state (QStash schedules, tasks, blocks)
 
 ## Development
 
