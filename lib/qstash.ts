@@ -208,6 +208,33 @@ export async function deleteSchedule(scheduleId: string): Promise<void> {
   }
 }
 
+export interface QStashScheduleInfo {
+  scheduleId: string;
+  destination: string;
+  cron: string;
+  body: string;
+  createdAt: number;
+  isPaused: boolean;
+}
+
+export async function listAllSchedules(): Promise<QStashScheduleInfo[]> {
+  const client = getClient();
+  try {
+    const schedules = await client.schedules.list();
+    return schedules.map((s) => ({
+      scheduleId: s.scheduleId,
+      destination: s.destination,
+      cron: s.cron || "",
+      body: s.body || "",
+      createdAt: s.createdAt,
+      isPaused: s.isPaused || false,
+    }));
+  } catch (error) {
+    console.error("Error listing QStash schedules:", error);
+    return [];
+  }
+}
+
 export async function cancelScheduledMessage(messageId: string): Promise<void> {
   const client = getClient();
   try {

@@ -42,6 +42,7 @@ import {
   scheduleMorningReview,
   deleteSchedule,
   cancelScheduledMessage,
+  listAllSchedules,
 } from "../lib/qstash.js";
 
 // Register the summarization callback to avoid circular imports
@@ -1799,6 +1800,7 @@ async function handleScheduleDebugCommand(chatId: number): Promise<void> {
     todayEnergyLogs,
     pendingFollowUp,
     awaitingCheckin,
+    qstashSchedules,
   ] = await Promise.all([
     redis.getUserPreferences(chatId),
     redis.getPendingTasks(chatId),
@@ -1808,6 +1810,7 @@ async function handleScheduleDebugCommand(chatId: number): Promise<void> {
     redis.getEnergyLogsForDay(chatId),
     redis.getPendingFollowUp(chatId),
     redis.isAwaitingCheckin(chatId),
+    listAllSchedules(),
   ]);
 
   // Build markdown document
@@ -1852,6 +1855,51 @@ async function handleScheduleDebugCommand(chatId: number): Promise<void> {
   );
 
   lines.push("");
+  lines.push("---");
+  lines.push("");
+
+  // QStash schedules (actual schedules from QStash API)
+  lines.push(
+    `## 1b. QStash Schedules (${qstashSchedules.length} total in account)`,
+  );
+  lines.push("");
+
+  const expectedBaseUrl = process.env.BASE_URL || `https://${process.env.VERCEL_URL || "unknown"}`;
+  lines.push(`**This bot's BASE_URL:** \`${expectedBaseUrl}\``);
+  lines.push("");
+
+  if (qstashSchedules.length === 0) {
+    lines.push("*No schedules found in QStash account.*");
+  } else {
+    for (const schedule of qstashSchedules) {
+      const isThisBot = schedule.destination.startsWith(expectedBaseUrl);
+      const statusIcon = isThisBot ? "✅" : "⚠️";
+
+      lines.push(`### ${statusIcon} Schedule: \`${schedule.scheduleId}\``);
+      lines.push("");
+      lines.push(`- **Destination:** \`${schedule.destination}\``);
+      lines.push(`- **Cron:** \`${schedule.cron}\``);
+      lines.push(`- **Paused:** ${schedule.isPaused ? "Yes" : "No"}`);
+      lines.push(
+        `- **Created:** ${new Date(schedule.createdAt).toLocaleString("en-US", { timeZone: timezone })}`,
+      );
+
+      // Parse and show the body payload
+      try {
+        const body = JSON.parse(schedule.body);
+        lines.push(`- **Payload:** chatId=${body.chatId}, type=${body.type}`);
+        if (body.chatId === chatId) {
+          lines.push(`- **For this user:** Yes`);
+        } else {
+          lines.push(`- **For this user:** No (chatId ${body.chatId})`);
+        }
+      } catch {
+        lines.push(`- **Body:** ${schedule.body}`);
+      }
+      lines.push("");
+    }
+  }
+
   lines.push("---");
   lines.push("");
 
