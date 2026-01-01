@@ -1859,23 +1859,25 @@ async function handleScheduleDebugCommand(chatId: number): Promise<void> {
   lines.push("");
 
   // QStash schedules (actual schedules from QStash API)
+  const expectedBaseUrl = process.env.BASE_URL || `https://${process.env.VERCEL_URL || "unknown"}`;
+  const thisBotSchedules = qstashSchedules.filter((s) =>
+    s.destination.startsWith(expectedBaseUrl),
+  );
+  const otherBotSchedules = qstashSchedules.length - thisBotSchedules.length;
+
   lines.push(
-    `## 1b. QStash Schedules (${qstashSchedules.length} total in account)`,
+    `## 1b. QStash Schedules (${thisBotSchedules.length} for this bot${otherBotSchedules > 0 ? `, ${otherBotSchedules} filtered from other bots` : ""})`,
   );
   lines.push("");
 
-  const expectedBaseUrl = process.env.BASE_URL || `https://${process.env.VERCEL_URL || "unknown"}`;
   lines.push(`**This bot's BASE_URL:** \`${expectedBaseUrl}\``);
   lines.push("");
 
-  if (qstashSchedules.length === 0) {
-    lines.push("*No schedules found in QStash account.*");
+  if (thisBotSchedules.length === 0) {
+    lines.push("*No schedules found for this bot.*");
   } else {
-    for (const schedule of qstashSchedules) {
-      const isThisBot = schedule.destination.startsWith(expectedBaseUrl);
-      const statusIcon = isThisBot ? "✅" : "⚠️";
-
-      lines.push(`### ${statusIcon} Schedule: \`${schedule.scheduleId}\``);
+    for (const schedule of thisBotSchedules) {
+      lines.push(`### Schedule: \`${schedule.scheduleId}\``);
       lines.push("");
       lines.push(`- **Destination:** \`${schedule.destination}\``);
       lines.push(`- **Cron:** \`${schedule.cron}\``);
