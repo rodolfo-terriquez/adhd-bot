@@ -83,7 +83,13 @@ export type Intent =
   | DayPlanningIntent
   | BatchTasksIntent
   | ContextTagIntent
-  | FilterByContextIntent;
+  | FilterByContextIntent
+  // Habit intents
+  | CreateHabitIntent
+  | ListHabitsIntent
+  | DeleteHabitIntent
+  | PauseHabitIntent
+  | CompleteHabitIntent;
 
 // parseIntent can return single intent or multiple intents
 export type ParsedIntents = Intent | Intent[];
@@ -363,6 +369,29 @@ export interface EnergyPattern {
   dataPoints: number;
 }
 
+// Recurring habits
+export interface Habit {
+  id: string;
+  chatId: number;
+  name: string; // "Meditate", "Exercise"
+  description?: string; // Optional longer description
+  days: DayOfWeek[]; // ["monday", "wednesday", "friday"]
+  preferredBlockId?: string; // Block to auto-assign to
+  energyRequired?: EnergyLevel; // For block matching if no preferred block
+  status: "active" | "paused";
+  createdAt: number;
+  updatedAt: number;
+}
+
+// Habit completion record
+export interface HabitCompletion {
+  id: string;
+  habitId: string;
+  chatId: number;
+  date: string; // "YYYY-MM-DD"
+  completedAt: number; // Timestamp
+}
+
 // Raw unprocessed input before task extraction
 export interface CapturedItem {
   id: string;
@@ -518,4 +547,32 @@ export interface FilterByContextIntent {
   type: "filter_by_context";
   tags: string[];
   showOnly?: boolean;
+}
+
+// Habit intents
+export interface CreateHabitIntent {
+  type: "create_habit";
+  name: string;
+  days: DayOfWeek[] | "daily" | "weekdays" | "weekends";
+  preferredBlock?: string; // "morning", "evening", block name
+}
+
+export interface ListHabitsIntent {
+  type: "list_habits";
+}
+
+export interface DeleteHabitIntent {
+  type: "delete_habit";
+  habitName: string;
+}
+
+export interface PauseHabitIntent {
+  type: "pause_habit";
+  habitName: string;
+  pause: boolean; // true = pause, false = resume
+}
+
+export interface CompleteHabitIntent {
+  type: "complete_habit";
+  habitName: string;
 }

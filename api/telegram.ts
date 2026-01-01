@@ -22,6 +22,12 @@ import type {
   ConfirmExtractionIntent,
   ExtractedTask,
   EnergyLevel,
+  CreateHabitIntent,
+  ListHabitsIntent,
+  DeleteHabitIntent,
+  PauseHabitIntent,
+  CompleteHabitIntent,
+  DayOfWeek,
 } from "../lib/types.js";
 import * as telegram from "../lib/telegram.js";
 import { transcribeAudio } from "../lib/whisper.js";
@@ -374,6 +380,22 @@ async function handleIntent(
 
     case "vacation_mode":
       return await handleVacationMode(chatId, intent, context, skipSend);
+
+    // Habit intents
+    case "create_habit":
+      return await handleCreateHabit(chatId, intent, context, skipSend);
+
+    case "list_habits":
+      return await handleListHabits(chatId, context, skipSend);
+
+    case "delete_habit":
+      return await handleDeleteHabit(chatId, intent, context, skipSend);
+
+    case "pause_habit":
+      return await handlePauseHabit(chatId, intent, context, skipSend);
+
+    case "complete_habit":
+      return await handleCompleteHabit(chatId, intent, context, skipSend);
 
     // V2 Capture intents
     case "capture":
@@ -2666,4 +2688,255 @@ async function setupDefaultSchedules(chatId: number): Promise<void> {
     console.error(`Failed to set up default schedules for ${chatId}:`, error);
     // Don't throw - this is a nice-to-have, not critical
   }
+}
+
+// ==========================================
+// Habit Handlers
+// ==========================================
+
+const ALL_DAYS: DayOfWeek[] = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+];
+const WEEKDAY_DAYS: DayOfWeek[] = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+];
+const WEEKEND_DAYS: DayOfWeek[] = ["saturday", "sunday"];
+
+function parseDays(
+  days: DayOfWeek[] | "daily" | "weekdays" | "weekends",
+): DayOfWeek[] {
+  if (days === "daily") return ALL_DAYS;
+  if (days === "weekdays") return WEEKDAY_DAYS;
+  if (days === "weekends") return WEEKEND_DAYS;
+  return days;
+}
+
+async function handleCreateHabit(
+  chatId: number,
+  intent: CreateHabitIntent,
+  context: ConversationContext,
+  skipSend: boolean = false,
+): Promise<string> {
+  const days = parseDays(intent.days);
+
+  // Try to match preferredBlock to an actual block
+  let preferredBlockId: string | undefined;
+  if (intent.preferredBlock) {
+    const blocks = await redis.getAllBlocks(chatId);
+    const blockName = intent.preferredBlock.toLowerCase();
+    const matchedBlock = blocks.find(
+      (b) =>
+        b.name.toLowerCase().includes(blockName) ||
+        blockName.includes(b.name.toLowerCase()),
+    );
+    if (matchedBlock) {
+      preferredBlockId = matchedBlock.id;
+    }
+  }
+
+  const habit = await redis.createHabit(
+    chatId,
+    intent.name,
+    days,
+    preferredBlockId,
+  );
+
+  const response = await generateActionResponse(
+    {
+      type: "habit_created",
+      name: habit.name,
+      days: formatDays(habit.days),
+      preferredBlock: intent.preferredBlock,
+    },
+    context,
+  );
+  if (!skipSend) {
+    await telegram.sendMessage(chatId, response);
+  }
+  return response;
+}
+
+async function handleListHabits(
+  chatId: number,
+  context: ConversationContext,
+  skipSend: boolean = false,
+): Promise<string> {
+  const habits = await redis.getAllHabits(chatId);
+  const todaysHabits = await redis.getHabitsForToday(chatId);
+
+  // Get completion status for today's habits
+  const habitsWithStatus = await Promise.all(
+    habits.map(async (habit) => {
+      const completedToday = await redis.isHabitCompletedToday(
+        chatId,
+        habit.id,
+      );
+      const isToday = todaysHabits.some((h) => h.id === habit.id);
+      return {
+        name: habit.name,
+        days: formatDays(habit.days),
+        status: habit.status,
+        completedToday,
+        isToday,
+      };
+    }),
+  );
+
+  const response = await generateActionResponse(
+    {
+      type: "habits_list",
+      habits: habitsWithStatus,
+      totalCount: habits.length,
+    },
+    context,
+  );
+  if (!skipSend) {
+    await telegram.sendMessage(chatId, response);
+  }
+  return response;
+}
+
+async function handleDeleteHabit(
+  chatId: number,
+  intent: DeleteHabitIntent,
+  context: ConversationContext,
+  skipSend: boolean = false,
+): Promise<string> {
+  const habit = await redis.findHabitByName(chatId, intent.habitName);
+
+  if (!habit) {
+    const response = await generateActionResponse(
+      {
+        type: "habit_not_found",
+        searchTerm: intent.habitName,
+      },
+      context,
+    );
+    if (!skipSend) {
+      await telegram.sendMessage(chatId, response);
+    }
+    return response;
+  }
+
+  await redis.deleteHabit(chatId, habit.id);
+
+  const response = await generateActionResponse(
+    {
+      type: "habit_deleted",
+      name: habit.name,
+    },
+    context,
+  );
+  if (!skipSend) {
+    await telegram.sendMessage(chatId, response);
+  }
+  return response;
+}
+
+async function handlePauseHabit(
+  chatId: number,
+  intent: PauseHabitIntent,
+  context: ConversationContext,
+  skipSend: boolean = false,
+): Promise<string> {
+  const habit = await redis.findHabitByName(chatId, intent.habitName);
+
+  if (!habit) {
+    const response = await generateActionResponse(
+      {
+        type: "habit_not_found",
+        searchTerm: intent.habitName,
+      },
+      context,
+    );
+    if (!skipSend) {
+      await telegram.sendMessage(chatId, response);
+    }
+    return response;
+  }
+
+  habit.status = intent.pause ? "paused" : "active";
+  await redis.updateHabit(habit);
+
+  const response = await generateActionResponse(
+    {
+      type: intent.pause ? "habit_paused" : "habit_resumed",
+      name: habit.name,
+    },
+    context,
+  );
+  if (!skipSend) {
+    await telegram.sendMessage(chatId, response);
+  }
+  return response;
+}
+
+async function handleCompleteHabit(
+  chatId: number,
+  intent: CompleteHabitIntent,
+  context: ConversationContext,
+  skipSend: boolean = false,
+): Promise<string> {
+  const habit = await redis.findHabitByName(chatId, intent.habitName);
+
+  if (!habit) {
+    const response = await generateActionResponse(
+      {
+        type: "habit_not_found",
+        searchTerm: intent.habitName,
+      },
+      context,
+    );
+    if (!skipSend) {
+      await telegram.sendMessage(chatId, response);
+    }
+    return response;
+  }
+
+  // Check if already completed today
+  const alreadyCompleted = await redis.isHabitCompletedToday(chatId, habit.id);
+  if (alreadyCompleted) {
+    const response = await generateActionResponse(
+      {
+        type: "habit_already_completed",
+        name: habit.name,
+      },
+      context,
+    );
+    if (!skipSend) {
+      await telegram.sendMessage(chatId, response);
+    }
+    return response;
+  }
+
+  await redis.completeHabit(chatId, habit.id);
+
+  // Get weekly stats for this habit
+  const completedDates = await redis.getHabitCompletionsForWeek(
+    chatId,
+    habit.id,
+  );
+
+  const response = await generateActionResponse(
+    {
+      type: "habit_completed",
+      name: habit.name,
+      weeklyCount: completedDates.length,
+    },
+    context,
+  );
+  if (!skipSend) {
+    await telegram.sendMessage(chatId, response);
+  }
+  return response;
 }

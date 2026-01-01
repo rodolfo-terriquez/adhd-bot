@@ -14,6 +14,8 @@ import type {
   ExtractedTask,
   DayOfWeek,
   EnergyLevel,
+  Habit,
+  HabitCompletion,
 } from "./types.js";
 
 let redisClient: Redis | null = null;
@@ -58,6 +60,14 @@ const CAPTURED_KEY = (chatId: number, capturedId: string) => `${getKeyPrefix()}c
 const CAPTURED_PENDING_KEY = (chatId: number) => `${getKeyPrefix()}captured_pending:${chatId}`;
 const BLOCK_TASKS_KEY = (chatId: number, blockId: string, date: string) => `${getKeyPrefix()}block_tasks:${chatId}:${blockId}:${date}`;
 const CURRENT_BLOCK_KEY = (chatId: number) => `${getKeyPrefix()}current_block:${chatId}`;
+
+// Habit key patterns
+const HABIT_KEY = (chatId: number, habitId: string) => `${getKeyPrefix()}habit:${chatId}:${habitId}`;
+const HABITS_SET_KEY = (chatId: number) => `${getKeyPrefix()}habits:${chatId}`;
+const HABIT_COMPLETION_KEY = (chatId: number, habitId: string, date: string) =>
+  `${getKeyPrefix()}habit_completion:${chatId}:${habitId}:${date}`;
+const HABIT_COMPLETIONS_SET_KEY = (chatId: number, habitId: string) =>
+  `${getKeyPrefix()}habit_completions:${chatId}:${habitId}`;
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -1818,4 +1828,243 @@ export async function removeTaskFromBlock(
   const dateKey = date || getTodayKey();
 
   await redis.srem(BLOCK_TASKS_KEY(chatId, blockId, dateKey), taskId);
+}
+
+// ==========================================
+// Habit Operations
+// ==========================================
+
+const TTL_HABIT_COMPLETION = 90 * 24 * 60 * 60; // 90 days
+
+export async function createHabit(
+  chatId: number,
+  name: string,
+  days: DayOfWeek[],
+  preferredBlockId?: string,
+  energyRequired?: EnergyLevel,
+): Promise<Habit> {
+  const redis = getClient();
+  const id = generateId();
+  const now = Date.now();
+
+  const habit: Habit = {
+    id,
+    chatId,
+    name,
+    days,
+    preferredBlockId,
+    energyRequired,
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await redis.set(HABIT_KEY(chatId, id), JSON.stringify(habit));
+  await redis.sadd(HABITS_SET_KEY(chatId), id);
+
+  return habit;
+}
+
+export async function getHabit(
+  chatId: number,
+  habitId: string,
+): Promise<Habit | null> {
+  const redis = getClient();
+  const data = await redis.get<string>(HABIT_KEY(chatId, habitId));
+  return data ? JSON.parse(data) : null;
+}
+
+export async function getAllHabits(chatId: number): Promise<Habit[]> {
+  const redis = getClient();
+  const habitIds = await redis.smembers(HABITS_SET_KEY(chatId));
+
+  const habits: Habit[] = [];
+  for (const id of habitIds) {
+    const habit = await getHabit(chatId, id);
+    if (habit) {
+      habits.push(habit);
+    }
+  }
+
+  return habits.sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export async function getActiveHabits(chatId: number): Promise<Habit[]> {
+  const habits = await getAllHabits(chatId);
+  return habits.filter((h) => h.status === "active");
+}
+
+export async function updateHabit(habit: Habit): Promise<void> {
+  const redis = getClient();
+  habit.updatedAt = Date.now();
+  await redis.set(HABIT_KEY(habit.chatId, habit.id), JSON.stringify(habit));
+}
+
+export async function deleteHabit(
+  chatId: number,
+  habitId: string,
+): Promise<void> {
+  const redis = getClient();
+  await redis.del(HABIT_KEY(chatId, habitId));
+  await redis.srem(HABITS_SET_KEY(chatId), habitId);
+}
+
+export async function findHabitByName(
+  chatId: number,
+  name: string,
+): Promise<Habit | null> {
+  const habits = await getAllHabits(chatId);
+  const normalizedSearch = name.toLowerCase().trim();
+
+  // Try exact match first
+  const exactMatch = habits.find(
+    (h) => h.name.toLowerCase().trim() === normalizedSearch,
+  );
+  if (exactMatch) return exactMatch;
+
+  // Try partial match
+  const partialMatch = habits.find(
+    (h) =>
+      h.name.toLowerCase().includes(normalizedSearch) ||
+      normalizedSearch.includes(h.name.toLowerCase()),
+  );
+  return partialMatch || null;
+}
+
+export async function getHabitsForDay(
+  chatId: number,
+  day: DayOfWeek,
+): Promise<Habit[]> {
+  const habits = await getActiveHabits(chatId);
+  return habits.filter((h) => h.days.includes(day));
+}
+
+export async function getHabitsForToday(chatId: number): Promise<Habit[]> {
+  const timezone = process.env.USER_TIMEZONE || "America/Los_Angeles";
+  const now = new Date();
+  const dayName = now
+    .toLocaleDateString("en-US", { weekday: "long", timeZone: timezone })
+    .toLowerCase() as DayOfWeek;
+
+  return getHabitsForDay(chatId, dayName);
+}
+
+// Habit completion tracking
+
+export async function completeHabit(
+  chatId: number,
+  habitId: string,
+  date?: string,
+): Promise<HabitCompletion> {
+  const redis = getClient();
+  const dateKey = date || getTodayKey();
+  const id = generateId();
+  const now = Date.now();
+
+  const completion: HabitCompletion = {
+    id,
+    habitId,
+    chatId,
+    date: dateKey,
+    completedAt: now,
+  };
+
+  await redis.set(
+    HABIT_COMPLETION_KEY(chatId, habitId, dateKey),
+    JSON.stringify(completion),
+    { ex: TTL_HABIT_COMPLETION },
+  );
+  await redis.sadd(HABIT_COMPLETIONS_SET_KEY(chatId, habitId), dateKey);
+  await redis.expire(
+    HABIT_COMPLETIONS_SET_KEY(chatId, habitId),
+    TTL_HABIT_COMPLETION,
+  );
+
+  return completion;
+}
+
+export async function isHabitCompletedToday(
+  chatId: number,
+  habitId: string,
+): Promise<boolean> {
+  const redis = getClient();
+  const dateKey = getTodayKey();
+  const data = await redis.get(HABIT_COMPLETION_KEY(chatId, habitId, dateKey));
+  return data !== null;
+}
+
+export async function isHabitCompletedOnDate(
+  chatId: number,
+  habitId: string,
+  date: string,
+): Promise<boolean> {
+  const redis = getClient();
+  const data = await redis.get(HABIT_COMPLETION_KEY(chatId, habitId, date));
+  return data !== null;
+}
+
+export async function getHabitCompletionsForWeek(
+  chatId: number,
+  habitId: string,
+): Promise<string[]> {
+  const completedDates: string[] = [];
+
+  // Check last 7 days
+  for (let i = 0; i < 7; i++) {
+    const date = new Date();
+    date.setDate(date.getDate() - i);
+    const dateKey = date.toISOString().split("T")[0];
+
+    if (await isHabitCompletedOnDate(chatId, habitId, dateKey)) {
+      completedDates.push(dateKey);
+    }
+  }
+
+  return completedDates;
+}
+
+export interface HabitStats {
+  habit: Habit;
+  completedDays: number;
+  scheduledDays: number;
+  completionRate: number;
+}
+
+export async function getWeeklyHabitStats(
+  chatId: number,
+): Promise<HabitStats[]> {
+  const habits = await getAllHabits(chatId);
+  const stats: HabitStats[] = [];
+
+  for (const habit of habits) {
+    // Count scheduled days in the last 7 days
+    let scheduledDays = 0;
+    let completedDays = 0;
+
+    for (let i = 0; i < 7; i++) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const timezone = process.env.USER_TIMEZONE || "America/Los_Angeles";
+      const dayName = date
+        .toLocaleDateString("en-US", { weekday: "long", timeZone: timezone })
+        .toLowerCase() as DayOfWeek;
+      const dateKey = date.toISOString().split("T")[0];
+
+      if (habit.days.includes(dayName)) {
+        scheduledDays++;
+        if (await isHabitCompletedOnDate(chatId, habit.id, dateKey)) {
+          completedDays++;
+        }
+      }
+    }
+
+    stats.push({
+      habit,
+      completedDays,
+      scheduledDays,
+      completionRate: scheduledDays > 0 ? completedDays / scheduledDays : 0,
+    });
+  }
+
+  return stats;
 }

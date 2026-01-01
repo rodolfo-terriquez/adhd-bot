@@ -343,6 +343,31 @@ VACATION MODE:
     "back from vacation", "vacation over" → action:"end"
     "vacation until Monday" → action:"start", until:"Monday"
 
+═══════════════════════════════════════════════════════════════════
+HABITS - Recurring activities:
+═══════════════════════════════════════════════════════════════════
+
+  create_habit → {"type":"create_habit","name":"...","days":"daily"|"weekdays"|"weekends"|["monday","wednesday",...],"preferredBlock":"..."}
+    "add habit: meditate every morning" → {"type":"create_habit","name":"meditate","days":"daily","preferredBlock":"morning"}
+    "I want to exercise on Mon/Wed/Fri" → {"type":"create_habit","name":"exercise","days":["monday","wednesday","friday"]}
+    "habit: take vitamins daily" → {"type":"create_habit","name":"take vitamins","days":"daily"}
+    "add reading habit on weekends" → {"type":"create_habit","name":"reading","days":"weekends"}
+    "journal every evening" → {"type":"create_habit","name":"journal","days":"daily","preferredBlock":"evening"}
+
+    Days shortcuts: "daily" = all days, "weekdays" = mon-fri, "weekends" = sat-sun
+    preferredBlock: "morning", "focus", "afternoon", "evening" or specific block name (optional)
+
+  list_habits → {"type":"list_habits"} - "show my habits", "list habits", "what are my habits"
+
+  delete_habit → {"type":"delete_habit","habitName":"..."} - "remove meditation habit", "delete the exercise habit", "stop tracking reading"
+
+  pause_habit → {"type":"pause_habit","habitName":"...","pause":bool}
+    "pause exercise habit" → pause:true
+    "resume meditation" → pause:false
+
+  complete_habit → {"type":"complete_habit","habitName":"..."} - "done with meditation", "finished exercising", "completed my journal"
+    Note: Use this when user completes a habit. Check if description matches a habit name.
+
 OTHER:
   conversation → {"type":"conversation","message":"<USER'S EXACT MESSAGE>"} - greetings, feelings, small talk
 
@@ -642,6 +667,12 @@ export interface MorningReviewData {
     bestTimeForHardTasks?: string;  // e.g., "Focus Time (9am-12pm)"
     dataPoints: number;  // How much data we have to base predictions on
   };
+  // Habits for today
+  habits?: {
+    name: string;
+    completed: boolean;
+    block?: string; // Preferred block name if any
+  }[];
 }
 
 export async function generateMorningReviewMessage(
@@ -653,9 +684,18 @@ export async function generateMorningReviewMessage(
   const hasInbox = data.inboxItems.length > 0;
   const hasOverdue = data.overdueTasks.length > 0;
   const hasTodaysTasks = (data.todaysTasks?.length ?? 0) > 0;
+  const hasHabits = (data.habits?.length ?? 0) > 0;
 
   // Build the data section for the prompt
   let dataSection = "";
+
+  // Habits come first - these are daily routines
+  if (hasHabits) {
+    const habitList = data.habits!
+      .map((h) => `- ${h.completed ? "[✓]" : "[ ]"} ${h.name}${h.block ? ` (${h.block})` : ""}`)
+      .join("\n");
+    dataSection += `Today's habits (${data.habits!.length}):\n${habitList}\n\n`;
+  }
 
   // Today's tasks get priority - these are reminders scheduled for today
   if (hasTodaysTasks) {
@@ -691,6 +731,7 @@ export async function generateMorningReviewMessage(
   const systemPrompt = `${MIKA_PERSONALITY}
 
 Generate a gentle morning review message. This is a daily invitation for the user to look at their items. The goal is to help them:
+- See today's habits (recurring activities they want to do today)
 - See today's reminders (these are things scheduled for today with specific times or just for this day)
 - Maybe schedule some inbox items (turn them into reminders with specific times or days)
 - Decide what to do with overdue items: reschedule them, mark them done, or drop them entirely
@@ -699,10 +740,10 @@ ${energySection ? `I've learned some of their energy patterns. Casually weave in
 
 Keep it warm and low-pressure. This is an invitation, not a demand. Frame it as "in case you want to" or "whenever you're ready." List the items clearly so they can see what's there. Dropping items is always a valid choice. Keep your intro/outro brief, but do show the full lists. Group items by the list they belong to so it's easy for the user to scan.`;
 
-  const hasAnyItems = hasTodaysTasks || hasInbox || hasOverdue;
+  const hasAnyItems = hasHabits || hasTodaysTasks || hasInbox || hasOverdue;
   const taskPrompt = hasAnyItems
     ? `Generate a morning review message with the following items:\n\n${dataSection}${energySection}`
-    : "Generate a brief morning greeting. There are no inbox items or overdue tasks right now.";
+    : "Generate a brief morning greeting. There are no habits, inbox items or overdue tasks right now.";
 
   const response = await client.chat.completions.create({
     model: getChatModel(),
@@ -714,10 +755,16 @@ Keep it warm and low-pressure. This is an invitation, not a demand. Frame it as 
   const content = response.choices[0]?.message?.content;
   if (!content) {
     // Fallback message
-    if (!hasInbox && !hasOverdue) {
+    if (!hasHabits && !hasInbox && !hasOverdue && !hasTodaysTasks) {
       return "Morning. Your inbox is clear and nothing's overdue. Fresh start today.";
     }
     let fallback = "Morning. Here's what's floating around:\n\n";
+    if (hasHabits) {
+      fallback += `Habits:\n${data.habits!.map((h) => `${h.completed ? "✓" : "○"} ${h.name}`).join("\n")}\n\n`;
+    }
+    if (hasTodaysTasks) {
+      fallback += `Today:\n${data.todaysTasks!.map((t) => `- ${t.content} (${t.scheduledTime})`).join("\n")}\n\n`;
+    }
     if (hasInbox) {
       fallback += `Inbox:\n${data.inboxItems.map((i) => `- ${i.content}`).join("\n")}\n\n`;
     }
@@ -731,11 +778,18 @@ Keep it warm and low-pressure. This is an invitation, not a demand. Frame it as 
   return content;
 }
 
+export interface WeeklyHabitStats {
+  name: string;
+  completed: number;
+  scheduled: number;
+}
+
 export async function generateWeeklyInsights(
   checkIns: CheckIn[],
   dumps: BrainDump[],
   completedTaskCount: number,
   context?: ConversationContext,
+  habitStats?: WeeklyHabitStats[],
 ): Promise<string> {
   const client = getClient();
 
@@ -764,9 +818,17 @@ export async function generateWeeklyInsights(
       ? dumps.map((d) => `- ${d.content}`).join("\n")
       : "No brain dumps this week.";
 
+  // Format habit stats
+  const hasHabits = habitStats && habitStats.length > 0;
+  const habitsText = hasHabits
+    ? habitStats
+        .map((h) => `- ${h.name}: ${h.completed}/${h.scheduled} days`)
+        .join("\n")
+    : "";
+
   const systemPrompt = `${MIKA_PERSONALITY}
 
-Create a gentle weekly reflection. Notice patterns (which days felt better/harder, any themes) without judgment. If you offer suggestions, frame them as options, not directives - "maybe," "you could try," "if it helps." Never imply the user should have done more. Treat all outcomes as neutral data. Keep it warm and concise.`;
+Create a gentle weekly reflection. Notice patterns (which days felt better/harder, any themes) without judgment. If you offer suggestions, frame them as options, not directives - "maybe," "you could try," "if it helps." Never imply the user should have done more. Treat all outcomes as neutral data. Keep it warm and concise.${hasHabits ? " Include a note about habit consistency, celebrating wins without judgment about misses." : ""}`;
 
   const taskPrompt = `Here's my week:
 
@@ -777,8 +839,8 @@ Average rating: ${avgRating}
 Tasks completed: ${completedTaskCount}
 Brain dumps captured: ${dumps.length}
 
-${dumps.length > 0 ? `Brain dump topics:\n${dumpsText}` : ""}
-
+${dumps.length > 0 ? `Brain dump topics:\n${dumpsText}\n` : ""}
+${hasHabits ? `Habits:\n${habitsText}\n` : ""}
 Please share any patterns you notice, gently.`;
 
   const response = await client.chat.completions.create({
@@ -1094,7 +1156,26 @@ export type ActionContext =
       currentEnergy: string;
       matchingTasks: string[];
       hasNoTasks: boolean;
-    };
+    }
+  // Habit action contexts
+  | { type: "habit_created"; name: string; days: string; preferredBlock?: string }
+  | {
+      type: "habits_list";
+      habits: Array<{
+        name: string;
+        days: string;
+        status: "active" | "paused";
+        completedToday: boolean;
+        isToday: boolean;
+      }>;
+      totalCount: number;
+    }
+  | { type: "habit_not_found"; searchTerm: string }
+  | { type: "habit_deleted"; name: string }
+  | { type: "habit_paused"; name: string }
+  | { type: "habit_resumed"; name: string }
+  | { type: "habit_completed"; name: string; weeklyCount: number }
+  | { type: "habit_already_completed"; name: string };
 
 export async function generateActionResponse(
   actionContext: ActionContext,
@@ -1345,6 +1426,47 @@ Just engage naturally with what they shared, maybe with a brief acknowledgment t
     case "extraction_cancelled":
       prompt = `The user decided not to add the extracted tasks. Acknowledge this casually - it's totally fine to change their mind.`;
       break;
+    // Habit cases
+    case "habit_created":
+      prompt = `The user just created a new habit "${actionContext.name}" scheduled for ${actionContext.days}${actionContext.preferredBlock ? `, preferring the ${actionContext.preferredBlock} block` : ""}. Acknowledge warmly - let them know it's set up and will appear in their daily flow.`;
+      break;
+    case "habits_list": {
+      if (actionContext.habits.length === 0) {
+        prompt = `The user asked about their habits but doesn't have any set up yet. Encourage them warmly to create some habits if they'd like.`;
+      } else {
+        const habitsList = actionContext.habits
+          .map((h) => {
+            const statusIcon = h.completedToday ? "✓" : h.isToday ? "○" : "·";
+            const statusText = h.status === "paused" ? " (paused)" : "";
+            return `${statusIcon} ${h.name} - ${h.days}${statusText}`;
+          })
+          .join("\n");
+        prompt = `Show the user their ${actionContext.totalCount} habit(s):\n\n${habitsList}\n\nPresent this clearly. If any are marked as completed today, acknowledge that. Legend: ✓ = done today, ○ = due today, · = not scheduled today.`;
+      }
+      break;
+    }
+    case "habit_not_found":
+      prompt = `The user tried to interact with a habit matching "${actionContext.searchTerm}" but I couldn't find one. Gently let them know and suggest they say "show habits" to see what they have.`;
+      break;
+    case "habit_deleted":
+      prompt = `The user deleted the "${actionContext.name}" habit. Acknowledge neutrally - it's okay to change what they're tracking.`;
+      break;
+    case "habit_paused":
+      prompt = `The user paused the "${actionContext.name}" habit. Acknowledge warmly - it won't show up in their daily flow until they resume it.`;
+      break;
+    case "habit_resumed":
+      prompt = `The user resumed the "${actionContext.name}" habit. Acknowledge warmly - it's back in their daily flow.`;
+      break;
+    case "habit_completed": {
+      const streakText = actionContext.weeklyCount > 1
+        ? ` That's ${actionContext.weeklyCount} times this week.`
+        : "";
+      prompt = `The user completed their "${actionContext.name}" habit for today.${streakText} Give a small, proportional celebration.`;
+      break;
+    }
+    case "habit_already_completed":
+      prompt = `The user tried to mark "${actionContext.name}" as done but it's already completed for today. Gently let them know it's already checked off.`;
+      break;
   }
 
   // For conversations, don't constrain response length - let the model respond naturally
@@ -1482,6 +1604,26 @@ Generate a response to acknowledge an action. Be warm but brief. For task lists,
         return `For ${actionContext.currentEnergy} energy:\n${actionContext.matchingTasks.map((t) => `- ${t}`).join("\n")}`;
       case "extraction_cancelled":
         return `No worries, dropped those.`;
+      // Habit fallbacks
+      case "habit_created":
+        return `Added "${actionContext.name}" habit for ${actionContext.days} 🐾`;
+      case "habits_list":
+        if (actionContext.habits.length === 0) {
+          return `No habits set up yet. Want to add some?`;
+        }
+        return `Your habits:\n${actionContext.habits.map((h) => `${h.completedToday ? "✓" : "○"} ${h.name} (${h.days})${h.status === "paused" ? " - paused" : ""}`).join("\n")}`;
+      case "habit_not_found":
+        return `Couldn't find a habit matching "${actionContext.searchTerm}". Say "show habits" to see what you have.`;
+      case "habit_deleted":
+        return `Removed the "${actionContext.name}" habit.`;
+      case "habit_paused":
+        return `Paused "${actionContext.name}". Resume it when you're ready.`;
+      case "habit_resumed":
+        return `Resumed "${actionContext.name}" 🐾`;
+      case "habit_completed":
+        return `${actionContext.name} - done! ${actionContext.weeklyCount > 1 ? `(${actionContext.weeklyCount}x this week)` : ""} 🐾`;
+      case "habit_already_completed":
+        return `"${actionContext.name}" is already done for today.`;
     }
   }
 

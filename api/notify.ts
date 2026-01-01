@@ -21,6 +21,7 @@ import {
   generateBlockEndMessage,
   generateEnergyCheckMessage,
   ConversationContext,
+  WeeklyHabitStats,
 } from "../lib/llm.js";
 
 // Helper to get conversation context for a chat
@@ -214,20 +215,28 @@ async function handleWeeklySummary(
 ): Promise<void> {
   const { chatId } = payload;
 
-  // Get weekly check-ins and brain dumps
-  const [checkIns, dumps, completedTaskCount] = await Promise.all([
+  // Get weekly check-ins, brain dumps, and habit stats
+  const [checkIns, dumps, completedTaskCount, habitStats] = await Promise.all([
     redis.getWeeklyCheckIns(chatId),
     redis.getWeeklyDumps(chatId),
     redis.getWeeklyCompletedTaskCount(chatId),
+    redis.getWeeklyHabitStats(chatId),
   ]);
 
   // Only send if there's any data
-  if (checkIns.length === 0 && dumps.length === 0 && completedTaskCount === 0) {
+  if (checkIns.length === 0 && dumps.length === 0 && completedTaskCount === 0 && habitStats.length === 0) {
     return;
   }
 
   // Get conversation context
   const context = await getContext(chatId);
+
+  // Format habit stats for the weekly insights
+  const formattedHabitStats: WeeklyHabitStats[] = habitStats.map((h) => ({
+    name: h.habit.name,
+    completed: h.completedDays,
+    scheduled: h.scheduledDays,
+  }));
 
   // Generate weekly insights
   const insights = await generateWeeklyInsights(
@@ -235,6 +244,7 @@ async function handleWeeklySummary(
     dumps,
     completedTaskCount,
     context,
+    formattedHabitStats.length > 0 ? formattedHabitStats : undefined,
   );
 
   await telegram.sendMessage(chatId, insights);
@@ -287,13 +297,14 @@ async function handleMorningReview(
 ): Promise<void> {
   const { chatId } = payload;
 
-  // Get inbox items, overdue tasks, today's tasks, and energy patterns
-  const [inboxItems, overdueTasks, todaysTasks, energyPattern, blocks] = await Promise.all([
+  // Get inbox items, overdue tasks, today's tasks, energy patterns, and habits
+  const [inboxItems, overdueTasks, todaysTasks, energyPattern, blocks, todaysHabits] = await Promise.all([
     redis.getUncheckedInboxItems(chatId),
     redis.getOverdueTasks(chatId),
     redis.getTodaysTasks(chatId),
     redis.getEnergyPattern(chatId),
     redis.getActiveBlocks(chatId),
+    redis.getHabitsForToday(chatId),
   ]);
 
   // Get conversation context
@@ -367,6 +378,24 @@ async function handleMorningReview(
     };
   }
 
+  // Format habits with completion status
+  const habits = await Promise.all(
+    todaysHabits.map(async (habit) => {
+      const completed = await redis.isHabitCompletedToday(chatId, habit.id);
+      // Find preferred block name if any
+      let blockName: string | undefined;
+      if (habit.preferredBlockId) {
+        const block = blocks.find((b) => b.id === habit.preferredBlockId);
+        blockName = block?.name;
+      }
+      return {
+        name: habit.name,
+        completed,
+        block: blockName,
+      };
+    }),
+  );
+
   // Generate the morning review message
   const message = await generateMorningReviewMessage(
     {
@@ -374,6 +403,7 @@ async function handleMorningReview(
       overdueTasks: formattedOverdue,
       todaysTasks: formattedToday,
       energyInsights,
+      habits: habits.length > 0 ? habits : undefined,
     },
     context,
   );
