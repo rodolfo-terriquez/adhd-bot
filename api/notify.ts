@@ -307,6 +307,9 @@ async function handleMorningReview(
     redis.getHabitsForToday(chatId),
   ]);
 
+  // Schedule habits to blocks for today (auto-assigns based on preferences/energy)
+  await redis.scheduleHabitsToBlocks(chatId);
+
   // Get conversation context
   const context = await getContext(chatId);
 
@@ -378,15 +381,18 @@ async function handleMorningReview(
     };
   }
 
-  // Format habits with completion status
+  // Format habits with completion status and assigned block
   const habits = await Promise.all(
     todaysHabits.map(async (habit) => {
       const completed = await redis.isHabitCompletedToday(chatId, habit.id);
-      // Find preferred block name if any
+      // Find which block this habit is assigned to for today
       let blockName: string | undefined;
-      if (habit.preferredBlockId) {
-        const block = blocks.find((b) => b.id === habit.preferredBlockId);
-        blockName = block?.name;
+      for (const block of blocks) {
+        const blockHabits = await redis.getHabitsForBlock(chatId, block.id);
+        if (blockHabits.includes(habit.id)) {
+          blockName = block.name;
+          break;
+        }
       }
       return {
         name: habit.name,
@@ -485,6 +491,17 @@ async function handleBlockStart(payload: NotificationPayload): Promise<void> {
     }
   }
 
+  // Get habits assigned to this block for today
+  const habitIds = await redis.getHabitsForBlock(chatId, blockId, today);
+  const habits: Array<{ name: string; completed: boolean }> = [];
+  for (const habitId of habitIds) {
+    const habit = await redis.getHabit(chatId, habitId);
+    if (habit && habit.status === "active") {
+      const completed = await redis.isHabitCompletedToday(chatId, habit.id);
+      habits.push({ name: habit.name, completed });
+    }
+  }
+
   // Set this as the current block
   await redis.setCurrentBlock(chatId, blockId);
 
@@ -498,6 +515,7 @@ async function handleBlockStart(payload: NotificationPayload): Promise<void> {
       timeRange: `${block.startTime}-${block.endTime}`,
       energyProfile: block.energyProfile,
       tasks,
+      habits: habits.length > 0 ? habits : undefined,
     },
     context,
   );
@@ -545,6 +563,23 @@ async function handleBlockEnd(payload: NotificationPayload): Promise<void> {
     }
   }
 
+  // Get habits assigned to this block and separate by completion
+  const habitIds = await redis.getHabitsForBlock(chatId, blockId, today);
+  const completedHabits: string[] = [];
+  const incompleteHabits: string[] = [];
+
+  for (const habitId of habitIds) {
+    const habit = await redis.getHabit(chatId, habitId);
+    if (habit && habit.status === "active") {
+      const completed = await redis.isHabitCompletedToday(chatId, habit.id);
+      if (completed) {
+        completedHabits.push(habit.name);
+      } else {
+        incompleteHabits.push(habit.name);
+      }
+    }
+  }
+
   // Find next block (simple implementation - would need proper scheduling logic)
   const allBlocks = await redis.getAllBlocks(chatId);
   const currentIndex = allBlocks.findIndex((b) => b.id === blockId);
@@ -564,6 +599,8 @@ async function handleBlockEnd(payload: NotificationPayload): Promise<void> {
       blockName: block.name,
       completedTasks,
       remainingTasks,
+      completedHabits: completedHabits.length > 0 ? completedHabits : undefined,
+      incompleteHabits: incompleteHabits.length > 0 ? incompleteHabits : undefined,
       nextBlockName: nextBlock?.name,
     },
     context,

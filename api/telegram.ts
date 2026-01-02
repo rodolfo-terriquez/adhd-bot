@@ -27,6 +27,8 @@ import type {
   DeleteHabitIntent,
   PauseHabitIntent,
   CompleteHabitIntent,
+  MoveHabitToBlockIntent,
+  SetHabitPreferredBlockIntent,
   DayOfWeek,
 } from "../lib/types.js";
 import * as telegram from "../lib/telegram.js";
@@ -396,6 +398,12 @@ async function handleIntent(
 
     case "complete_habit":
       return await handleCompleteHabit(chatId, intent, context, skipSend);
+
+    case "move_habit_to_block":
+      return await handleMoveHabitToBlock(chatId, intent, context, skipSend);
+
+    case "set_habit_preferred_block":
+      return await handleSetHabitPreferredBlock(chatId, intent, context, skipSend);
 
     // V2 Capture intents
     case "capture":
@@ -2932,6 +2940,127 @@ async function handleCompleteHabit(
       type: "habit_completed",
       name: habit.name,
       weeklyCount: completedDates.length,
+    },
+    context,
+  );
+  if (!skipSend) {
+    await telegram.sendMessage(chatId, response);
+  }
+  return response;
+}
+
+async function handleMoveHabitToBlock(
+  chatId: number,
+  intent: MoveHabitToBlockIntent,
+  context: ConversationContext,
+  skipSend: boolean = false,
+): Promise<string> {
+  // Find the habit
+  const habit = await redis.findHabitByName(chatId, intent.habitName);
+  if (!habit) {
+    const response = await generateActionResponse(
+      {
+        type: "habit_not_found",
+        searchTerm: intent.habitName,
+      },
+      context,
+    );
+    if (!skipSend) {
+      await telegram.sendMessage(chatId, response);
+    }
+    return response;
+  }
+
+  // Find the block
+  const block = await redis.findBlockByName(chatId, intent.blockName);
+  if (!block) {
+    const response = await generateActionResponse(
+      {
+        type: "habit_block_not_found",
+        blockName: intent.blockName,
+      },
+      context,
+    );
+    if (!skipSend) {
+      await telegram.sendMessage(chatId, response);
+    }
+    return response;
+  }
+
+  // Remove from all blocks and assign to the new one (for today)
+  await redis.removeHabitFromAllBlocks(chatId, habit.id);
+  await redis.assignHabitToBlock(chatId, habit.id, block.id);
+
+  const response = await generateActionResponse(
+    {
+      type: "habit_moved_to_block",
+      habitName: habit.name,
+      blockName: block.name,
+    },
+    context,
+  );
+  if (!skipSend) {
+    await telegram.sendMessage(chatId, response);
+  }
+  return response;
+}
+
+async function handleSetHabitPreferredBlock(
+  chatId: number,
+  intent: SetHabitPreferredBlockIntent,
+  context: ConversationContext,
+  skipSend: boolean = false,
+): Promise<string> {
+  // Find the habit
+  const habit = await redis.findHabitByName(chatId, intent.habitName);
+  if (!habit) {
+    const response = await generateActionResponse(
+      {
+        type: "habit_not_found",
+        searchTerm: intent.habitName,
+      },
+      context,
+    );
+    if (!skipSend) {
+      await telegram.sendMessage(chatId, response);
+    }
+    return response;
+  }
+
+  let blockName: string | null = null;
+
+  if (intent.blockName) {
+    // Find the block
+    const block = await redis.findBlockByName(chatId, intent.blockName);
+    if (!block) {
+      const response = await generateActionResponse(
+        {
+          type: "habit_block_not_found",
+          blockName: intent.blockName,
+        },
+        context,
+      );
+      if (!skipSend) {
+        await telegram.sendMessage(chatId, response);
+      }
+      return response;
+    }
+
+    // Update habit's preferred block
+    habit.preferredBlockId = block.id;
+    blockName = block.name;
+  } else {
+    // Clear preferred block
+    habit.preferredBlockId = undefined;
+  }
+
+  await redis.updateHabit(habit);
+
+  const response = await generateActionResponse(
+    {
+      type: "habit_preferred_block_set",
+      habitName: habit.name,
+      blockName,
     },
     context,
   );

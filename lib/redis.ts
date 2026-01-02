@@ -68,6 +68,8 @@ const HABIT_COMPLETION_KEY = (chatId: number, habitId: string, date: string) =>
   `${getKeyPrefix()}habit_completion:${chatId}:${habitId}:${date}`;
 const HABIT_COMPLETIONS_SET_KEY = (chatId: number, habitId: string) =>
   `${getKeyPrefix()}habit_completions:${chatId}:${habitId}`;
+const BLOCK_HABITS_KEY = (chatId: number, blockId: string, date: string) =>
+  `${getKeyPrefix()}block_habits:${chatId}:${blockId}:${date}`;
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -1828,6 +1830,108 @@ export async function removeTaskFromBlock(
   const dateKey = date || getTodayKey();
 
   await redis.srem(BLOCK_TASKS_KEY(chatId, blockId, dateKey), taskId);
+}
+
+// ==========================================
+// Habit-to-Block Operations
+// ==========================================
+
+export async function assignHabitToBlock(
+  chatId: number,
+  habitId: string,
+  blockId: string,
+  date?: string,
+): Promise<void> {
+  const redis = getClient();
+  const dateKey = date || getTodayKey();
+
+  await redis.sadd(BLOCK_HABITS_KEY(chatId, blockId, dateKey), habitId);
+  // 2-day TTL like block_tasks
+  await redis.expire(BLOCK_HABITS_KEY(chatId, blockId, dateKey), 2 * 24 * 60 * 60);
+}
+
+export async function getHabitsForBlock(
+  chatId: number,
+  blockId: string,
+  date?: string,
+): Promise<string[]> {
+  const redis = getClient();
+  const dateKey = date || getTodayKey();
+
+  const habitIds = await redis.smembers<string[]>(BLOCK_HABITS_KEY(chatId, blockId, dateKey));
+  return habitIds || [];
+}
+
+export async function removeHabitFromBlock(
+  chatId: number,
+  habitId: string,
+  blockId: string,
+  date?: string,
+): Promise<void> {
+  const redis = getClient();
+  const dateKey = date || getTodayKey();
+
+  await redis.srem(BLOCK_HABITS_KEY(chatId, blockId, dateKey), habitId);
+}
+
+export async function removeHabitFromAllBlocks(
+  chatId: number,
+  habitId: string,
+  date?: string,
+): Promise<void> {
+  const blocks = await getActiveBlocks(chatId);
+  const dateKey = date || getTodayKey();
+
+  for (const block of blocks) {
+    await removeHabitFromBlock(chatId, habitId, block.id, dateKey);
+  }
+}
+
+export async function scheduleHabitsToBlocks(chatId: number): Promise<void> {
+  const dateKey = getTodayKey();
+  const habits = await getHabitsForToday(chatId);
+  const blocks = await getActiveBlocks(chatId);
+
+  if (blocks.length === 0) return;
+
+  for (const habit of habits) {
+    // Skip completed habits
+    if (await isHabitCompletedToday(chatId, habit.id)) continue;
+
+    // Check if habit is already assigned to a block today
+    let alreadyAssigned = false;
+    for (const block of blocks) {
+      const blockHabits = await getHabitsForBlock(chatId, block.id, dateKey);
+      if (blockHabits.includes(habit.id)) {
+        alreadyAssigned = true;
+        break;
+      }
+    }
+    if (alreadyAssigned) continue;
+
+    let targetBlockId: string | undefined = habit.preferredBlockId;
+
+    // Verify preferred block exists and is active
+    if (targetBlockId) {
+      const preferredBlock = blocks.find(b => b.id === targetBlockId);
+      if (!preferredBlock) {
+        targetBlockId = undefined; // Block doesn't exist anymore
+      }
+    }
+
+    // Auto-assign by energy if no preferred block
+    if (!targetBlockId && habit.energyRequired) {
+      const match = blocks.find(b => b.energyProfile === habit.energyRequired);
+      if (match) targetBlockId = match.id;
+    }
+
+    // Fallback: assign to first block (usually Morning Routine)
+    if (!targetBlockId) {
+      targetBlockId = blocks[0].id;
+    }
+
+    await assignHabitToBlock(chatId, habit.id, targetBlockId, dateKey);
+  }
 }
 
 // ==========================================

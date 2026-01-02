@@ -368,6 +368,19 @@ HABITS - Recurring activities:
   complete_habit → {"type":"complete_habit","habitName":"..."} - "done with meditation", "finished exercising", "completed my journal"
     Note: Use this when user completes a habit. Check if description matches a habit name.
 
+HABIT BLOCK MANAGEMENT:
+  move_habit_to_block → {"type":"move_habit_to_block","habitName":"...","blockName":"..."}
+    Move habit to a different block for TODAY only (temporary)
+    "move meditation to evening" → moves to Evening block for today
+    "do exercise during focus time" → moves to Focus Time block for today
+    "put journaling in afternoon block"
+
+  set_habit_preferred_block → {"type":"set_habit_preferred_block","habitName":"...","blockName":"..."}
+    Permanently set which block a habit should always go to
+    "always put meditation in morning routine" → permanent setting
+    "exercise should always be in afternoon"
+    "clear preferred block for journaling" → blockName: null (removes preference)
+
 OTHER:
   conversation → {"type":"conversation","message":"<USER'S EXACT MESSAGE>"} - greetings, feelings, small talk
 
@@ -867,6 +880,7 @@ export interface BlockStartData {
   timeRange: string;
   energyProfile: string;
   tasks: Array<{ content: string; energy?: string }>;
+  habits?: Array<{ name: string; completed: boolean }>;
 }
 
 export async function generateBlockStartMessage(
@@ -879,14 +893,19 @@ export async function generateBlockStartMessage(
     ? data.tasks.map((t) => `- ${t.content}${t.energy ? ` (${t.energy} energy)` : ""}`).join("\n")
     : "No tasks slotted yet";
 
+  const habitList = data.habits && data.habits.length > 0
+    ? data.habits.map((h) => `- ${h.completed ? "[✓]" : "[ ]"} ${h.name}`).join("\n")
+    : "";
+
   const systemPrompt = `${MIKA_PERSONALITY}
 
-Announce a time block starting. Be brief and encouraging. Mention what tasks are lined up if any. Don't pressure - just inform.`;
+Announce a time block starting. Be brief and encouraging. Mention what tasks and habits are lined up if any. Don't pressure - just inform.`;
 
   const userPrompt = `${data.blockName} is starting (${data.timeRange}). Energy profile: ${data.energyProfile}.
 
 Tasks slotted for this block:
 ${taskList}
+${habitList ? `\nHabits for this block:\n${habitList}` : ""}
 
 Give a brief, warm announcement.`;
 
@@ -899,7 +918,8 @@ Give a brief, warm announcement.`;
 
   const content = response.choices[0]?.message?.content;
   if (!content) {
-    return `${data.blockName} starting 🐾\n\n${data.tasks.length > 0 ? `Slotted:\n${taskList}` : "Nothing specific slotted - take it easy."}`;
+    const habitsText = habitList ? `\nHabits:\n${habitList}` : "";
+    return `${data.blockName} starting 🐾\n\n${data.tasks.length > 0 ? `Slotted:\n${taskList}` : "Nothing specific slotted - take it easy."}${habitsText}`;
   }
 
   return content;
@@ -909,6 +929,8 @@ export interface BlockEndData {
   blockName: string;
   completedTasks: string[];
   remainingTasks: string[];
+  completedHabits?: string[];
+  incompleteHabits?: string[];
   nextBlockName?: string;
 }
 
@@ -920,14 +942,22 @@ export async function generateBlockEndMessage(
 
   const systemPrompt = `${MIKA_PERSONALITY}
 
-A time block is ending. Briefly acknowledge any wins. If there are remaining tasks, mention they'll carry forward - no judgment. If there's a next block, mention it casually.`;
+A time block is ending. Briefly acknowledge any wins (including completed habits). If there are remaining tasks or habits, mention they'll carry forward - no judgment. If there's a next block, mention it casually.`;
 
   const completedText = data.completedTasks.length > 0
-    ? `Completed: ${data.completedTasks.join(", ")}`
-    : "Nothing checked off, and that's okay";
+    ? `Completed tasks: ${data.completedTasks.join(", ")}`
+    : "No tasks checked off, and that's okay";
 
   const remainingText = data.remainingTasks.length > 0
     ? `Still pending: ${data.remainingTasks.join(", ")}`
+    : "";
+
+  const completedHabitsText = data.completedHabits && data.completedHabits.length > 0
+    ? `Habits done: ${data.completedHabits.join(", ")}`
+    : "";
+
+  const incompleteHabitsText = data.incompleteHabits && data.incompleteHabits.length > 0
+    ? `Habits still open: ${data.incompleteHabits.join(", ")}`
     : "";
 
   const nextBlockText = data.nextBlockName
@@ -937,7 +967,9 @@ A time block is ending. Briefly acknowledge any wins. If there are remaining tas
   const userPrompt = `${data.blockName} is wrapping up.
 
 ${completedText}
+${completedHabitsText}
 ${remainingText}
+${incompleteHabitsText}
 ${nextBlockText}
 
 Give a brief transition message.`;
@@ -952,8 +984,9 @@ Give a brief transition message.`;
   const content = response.choices[0]?.message?.content;
   if (!content) {
     let message = `${data.blockName} wrapping up 🐾`;
-    if (data.completedTasks.length > 0) {
-      message += `\n\nNice work on: ${data.completedTasks.join(", ")}`;
+    if (data.completedTasks.length > 0 || (data.completedHabits && data.completedHabits.length > 0)) {
+      const allCompleted = [...data.completedTasks, ...(data.completedHabits || [])];
+      message += `\n\nNice work on: ${allCompleted.join(", ")}`;
     }
     if (data.nextBlockName) {
       message += `\n\n${data.nextBlockName} next.`;
@@ -1175,7 +1208,10 @@ export type ActionContext =
   | { type: "habit_paused"; name: string }
   | { type: "habit_resumed"; name: string }
   | { type: "habit_completed"; name: string; weeklyCount: number }
-  | { type: "habit_already_completed"; name: string };
+  | { type: "habit_already_completed"; name: string }
+  | { type: "habit_moved_to_block"; habitName: string; blockName: string }
+  | { type: "habit_preferred_block_set"; habitName: string; blockName: string | null }
+  | { type: "habit_block_not_found"; blockName: string };
 
 export async function generateActionResponse(
   actionContext: ActionContext,
@@ -1467,6 +1503,19 @@ Just engage naturally with what they shared, maybe with a brief acknowledgment t
     case "habit_already_completed":
       prompt = `The user tried to mark "${actionContext.name}" as done but it's already completed for today. Gently let them know it's already checked off.`;
       break;
+    case "habit_moved_to_block":
+      prompt = `The user moved their "${actionContext.habitName}" habit to the "${actionContext.blockName}" block for today. Confirm the move briefly.`;
+      break;
+    case "habit_preferred_block_set":
+      if (actionContext.blockName) {
+        prompt = `The user set "${actionContext.habitName}" to always be scheduled in the "${actionContext.blockName}" block. Confirm this permanent preference.`;
+      } else {
+        prompt = `The user cleared the preferred block for "${actionContext.habitName}". It will now be auto-assigned based on energy level. Confirm briefly.`;
+      }
+      break;
+    case "habit_block_not_found":
+      prompt = `The user tried to move a habit to a block called "${actionContext.blockName}" but that block doesn't exist. Gently let them know and suggest they check their blocks.`;
+      break;
   }
 
   // For conversations, don't constrain response length - let the model respond naturally
@@ -1624,6 +1673,14 @@ Generate a response to acknowledge an action. Be warm but brief. For task lists,
         return `${actionContext.name} - done! ${actionContext.weeklyCount > 1 ? `(${actionContext.weeklyCount}x this week)` : ""} 🐾`;
       case "habit_already_completed":
         return `"${actionContext.name}" is already done for today.`;
+      case "habit_moved_to_block":
+        return `Moved "${actionContext.habitName}" to ${actionContext.blockName} for today.`;
+      case "habit_preferred_block_set":
+        return actionContext.blockName
+          ? `"${actionContext.habitName}" will now always be in ${actionContext.blockName}.`
+          : `Cleared preferred block for "${actionContext.habitName}".`;
+      case "habit_block_not_found":
+        return `Couldn't find a block called "${actionContext.blockName}". Say "show blocks" to see your blocks.`;
     }
   }
 

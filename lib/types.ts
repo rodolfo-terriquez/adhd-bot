@@ -89,7 +89,9 @@ export type Intent =
   | ListHabitsIntent
   | DeleteHabitIntent
   | PauseHabitIntent
-  | CompleteHabitIntent;
+  | CompleteHabitIntent
+  | MoveHabitToBlockIntent
+  | SetHabitPreferredBlockIntent;
 
 // parseIntent can return single intent or multiple intents
 export type ParsedIntents = Intent | Intent[];
@@ -575,4 +577,16 @@ export interface PauseHabitIntent {
 export interface CompleteHabitIntent {
   type: "complete_habit";
   habitName: string;
+}
+
+export interface MoveHabitToBlockIntent {
+  type: "move_habit_to_block";
+  habitName: string;
+  blockName: string;
+}
+
+export interface SetHabitPreferredBlockIntent {
+  type: "set_habit_preferred_block";
+  habitName: string;
+  blockName: string | null; // null to clear preferred block
 }
