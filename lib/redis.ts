@@ -1871,7 +1871,8 @@ export async function getHabit(
 ): Promise<Habit | null> {
   const redis = getClient();
   const data = await redis.get<string>(HABIT_KEY(chatId, habitId));
-  return data ? JSON.parse(data) : null;
+  if (!data) return null;
+  return typeof data === "string" ? JSON.parse(data) : data;
 }
 
 export async function getAllHabits(chatId: number): Promise<Habit[]> {
