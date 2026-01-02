@@ -1876,7 +1876,9 @@ export async function getHabit(
 
 export async function getAllHabits(chatId: number): Promise<Habit[]> {
   const redis = getClient();
-  const habitIds = await redis.smembers(HABITS_SET_KEY(chatId));
+  const habitIds = await redis.smembers<string[]>(HABITS_SET_KEY(chatId));
+
+  if (!habitIds || habitIds.length === 0) return [];
 
   const habits: Habit[] = [];
   for (const id of habitIds) {
