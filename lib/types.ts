@@ -590,3 +590,54 @@ export interface SetHabitPreferredBlockIntent {
   habitName: string;
   blockName: string | null; // null to clear preferred block
 }
+
+// ==========================================
+// Agent Loop Types (Agentic Architecture)
+// ==========================================
+
+export interface AgentConfig {
+  maxIterations: number;
+  maxTokens: number;
+  model: string;
+}
+
+// OpenAI function calling format
+export interface ToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: "object";
+      properties: Record<string, {
+        type: string;
+        description: string;
+        enum?: string[];
+        items?: { type: string };
+      }>;
+      required: string[];
+    };
+  };
+}
+
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string; // JSON string
+  };
+}
+
+export interface ToolResult {
+  tool_call_id: string;
+  role: "tool";
+  content: string;
+}
+
+export interface AgentMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+}

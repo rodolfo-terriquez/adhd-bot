@@ -9,6 +9,8 @@ import type {
   CheckIn,
   ExtractedTask,
   EnergyLevel,
+  ToolDefinition,
+  ToolCall,
 } from "./types.js";
 import type { ConversationMessage } from "./redis.js";
 
@@ -77,8 +79,54 @@ function getClient(): OpenAI {
   return openrouterClient;
 }
 
+// ==========================================
+// Agent Loop LLM Call (with tool support)
+// ==========================================
+
+export interface LLMWithToolsResponse {
+  content: string | null;
+  toolCalls: ToolCall[];
+  finishReason: string;
+}
+
+export async function callLLMWithTools(
+  messages: ChatCompletionMessageParam[],
+  tools: ToolDefinition[],
+  model?: string,
+): Promise<LLMWithToolsResponse> {
+  const client = getClient();
+
+  const response = await client.chat.completions.create({
+    model: model || getChatModel(),
+    max_tokens: 2000,
+    messages,
+    tools: tools as OpenAI.ChatCompletionTool[],
+    tool_choice: "auto",
+    ...getChatParams(),
+  });
+
+  const choice = response.choices[0];
+  const message = choice?.message;
+
+  // Extract tool calls if present
+  const toolCalls: ToolCall[] = (message?.tool_calls || []).map(tc => ({
+    id: tc.id,
+    type: "function" as const,
+    function: {
+      name: tc.function.name,
+      arguments: tc.function.arguments,
+    },
+  }));
+
+  return {
+    content: message?.content || null,
+    toolCalls,
+    finishReason: choice?.finish_reason || "stop",
+  };
+}
+
 // Get user's timezone from env (defaults to America/Los_Angeles)
-function getUserTimezone(): string {
+export function getUserTimezone(): string {
   return process.env.USER_TIMEZONE || "America/Los_Angeles";
 }
 
@@ -162,7 +210,7 @@ ${context.summary}
 }
 
 // Mika personality prompt - used across all LLM interactions
-const MIKA_PERSONALITY = `You are Mika, a cozy cat-girl companion designed to support a user with ADHD.
+export const MIKA_PERSONALITY = `You are Mika, a cozy cat-girl companion designed to support a user with ADHD.
 
 You're not a coach or manager. You're a friend who happens to be good at holding space, remembering things, and offering gentle nudges when asked.
 
