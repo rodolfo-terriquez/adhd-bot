@@ -2,6 +2,27 @@
 
 A Telegram bot designed to help manage ADHD through natural language task reminders, voice message transcription, brain dump capture, habits tracking, energy awareness, and intelligent gentle nagging. Powered by "Mika", a warm cat-girl companion who helps without judgment.
 
+## Architecture
+
+### Agentic Loop
+
+The bot uses an **agentic loop architecture** where the LLM can execute multiple tools iteratively to handle complex, multi-step requests. This allows natural handling of vague or context-dependent commands.
+
+**Example: "Cancel my dentist task"**
+```
+User: "Cancel my dentist task"
+→ Agent searches for tasks matching "dentist"
+→ Agent finds: "Dentist appointment - Tomorrow 2pm"
+→ Agent cancels the task
+→ Agent responds: "Done! I've cancelled your dentist appointment reminder."
+```
+
+The agent has access to 22 tools for reading and modifying user data:
+- **Read tools**: `list_reminders`, `search_reminders`, `list_lists`, `get_list_items`, `get_habits`, `get_energy_patterns`
+- **Write tools**: `create_reminder`, `complete_reminder`, `cancel_reminder`, `add_to_inbox`, `create_list`, `modify_list`, `delete_list`, `create_habit`, `complete_habit`, `delete_habit`, `log_energy`, `save_brain_dump`
+
+This approach handles ambiguous requests gracefully - the LLM gathers context before acting, rather than guessing.
+
 ## Features
 
 ### Core Features
@@ -170,7 +191,7 @@ npm run type-check
 
 For local development, you'll need to use a tool like ngrok to expose your local server for Telegram webhooks.
 
-## Architecture
+## System Architecture
 
 ```
 ┌─────────────┐     ┌──────────────┐     ┌─────────────┐
@@ -195,6 +216,28 @@ For local development, you'll need to use a tool like ngrok to expose your local
        │◀───────────│   QStash    │
        │            │ (Scheduler)  │
                     └──────────────┘
+```
+
+### Agent Loop Flow
+
+```
+┌────────────────────────────────────────────────────────┐
+│                    Agent Loop                          │
+│                                                        │
+│  User Message                                          │
+│       │                                                │
+│       ▼                                                │
+│  ┌─────────┐    ┌─────────┐    ┌─────────────────┐   │
+│  │  LLM    │───▶│  Tool   │───▶│  Tool Executor  │   │
+│  │ (Mika)  │    │  Calls  │    │  (Redis/QStash) │   │
+│  └─────────┘    └─────────┘    └─────────────────┘   │
+│       ▲              │                   │            │
+│       │              │                   │            │
+│       └──────────────┴───────────────────┘            │
+│                  (Loop until text response)           │
+│                                                        │
+│  Final Response ──▶ Telegram                          │
+└────────────────────────────────────────────────────────┘
 ```
 
 ## Environment Variables

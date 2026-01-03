@@ -7,8 +7,9 @@ This is a Telegram bot designed to help users with ADHD manage tasks, reminders,
 **Key Characteristics:**
 - Serverless architecture (Vercel Functions)
 - Event-driven (webhooks + scheduled tasks)
-- Conversational AI with personality (Tama - a friendly cat-girl companion)
-- Natural language processing for intent parsing
+- **Agentic loop architecture** - LLM executes tools iteratively to handle multi-step requests
+- Conversational AI with personality (Mika - a friendly cat-girl companion)
+- 22 tools for reading and modifying user data
 - Persistent storage with Redis
 - Scheduled reminders with escalation
 
@@ -87,33 +88,23 @@ External Services:
    - Transcribes using OpenAI Whisper
    - Shows transcription to user
 4. Cancels any pending follow-ups (user has responded)
-5. Parses user intent using LLM with conversation context
-6. Routes to appropriate handler based on intent type
-7. Generates response using LLM
-8. Saves conversation to Redis
-9. Returns 200 OK to Telegram
+5. **Runs agent loop** - LLM iteratively executes tools until ready to respond
+6. Saves conversation to Redis
+7. Returns 200 OK to Telegram
 
-**Intent Handlers:**
-- `reminder` - Creates scheduled task (day-only or timed)
-  - Day-only: No specific time, appears only in morning review
-  - Timed: Specific time, sends QStash notification + appears in morning review
-- `multiple_reminders` - Creates multiple scheduled tasks
-- `reminder_with_list` - Creates task with linked checklist
-- `brain_dump` - Saves thought for daily summary
-- `inbox` - Adds item to inbox (general tasks without dates)
-- `mark_done` - Completes task or checks off inbox item
-- `cancel_task` - Deletes scheduled reminder (NOT for list items)
-- `cancel_multiple_tasks` - Deletes multiple scheduled reminders
-- `list_tasks` - Shows all pending reminders
-- `create_list` - Creates new checklist
-- `show_lists` - Shows all lists
-- `show_list` - Shows specific list with items
-- `modify_list` - Add/remove/check/uncheck list items (use for inbox removal)
-- `delete_list` - Deletes a list
-- `conversation` - General chat/questions
-- `checkin_response` - Logs daily rating (1-5)
-- `set_checkin_time` - Configures check-in schedule
-- `set_morning_review_time` - Configures morning review schedule
+**Agent Loop (replaces intent-based architecture):**
+The bot now uses an agentic loop where the LLM can execute tools iteratively:
+
+```
+User: "Cancel my dentist task"
+→ Agent calls search_reminders({query: "dentist"})
+→ Agent receives: [{id: "abc123", content: "Dentist appointment"}]
+→ Agent calls cancel_reminder({task_id: "abc123"})
+→ Agent receives: {success: true}
+→ Agent responds: "Done! I've cancelled your dentist appointment."
+```
+
+This allows handling multi-step operations where the LLM needs to gather context before acting.
 
 #### `/api/notify.ts` (QStash Callback Handler)
 **Trigger:** POST from QStash at scheduled times
@@ -236,25 +227,68 @@ Defines all TypeScript interfaces and types:
 - TTL management: Brain dumps expire in 30 days, check-ins in 90 days
 - Set-based indexing: Uses Redis sets for O(1) membership checks
 
+#### `agent.ts` (NEW - Agentic Loop)
+**Purpose:** Core agent loop that processes user messages
+**Key Function:**
+- `runAgentLoop()` - Main entry point for processing user messages
+  - Takes user message + conversation context
+  - Builds system prompt with Mika personality + tool instructions
+  - Loops: call LLM → execute tools → feed results back
+  - Terminates when LLM returns text without tool calls
+  - Returns final response string
+
+**Safeguards:**
+- Max 10 iterations
+- 25 second timeout (buffer before Vercel timeout)
+- Max 3 consecutive tool errors → graceful exit
+
+#### `tools.ts` (NEW - Tool Definitions & Executors)
+**Purpose:** Defines 22 tools available to the agent
+**Tool Categories:**
+
+**Read Tools (context gathering):**
+- `list_reminders` - Get all pending tasks
+- `search_reminders` - Find tasks by description
+- `list_lists` - Get all user lists
+- `get_list_items` - Get items in a specific list
+- `get_habits` - Get habits with today's status
+- `get_energy_patterns` - Get learned energy patterns
+- `get_current_time` - Get time in user's timezone
+
+**Write Tools (state changes):**
+- `create_reminder` - Create task + schedule QStash
+- `complete_reminder` - Mark task done
+- `cancel_reminder` - Delete task + cancel QStash
+- `add_to_inbox` - Add item to inbox
+- `create_list` - Create new list
+- `modify_list` - Add/remove/check items
+- `delete_list` - Delete list
+- `create_habit` - Create recurring habit
+- `complete_habit` - Mark habit done for today
+- `delete_habit` - Delete habit
+- `log_energy` - Log energy level
+- `save_brain_dump` - Save a note
+- `save_checkin` - Save daily check-in
+
+Each tool has:
+- OpenAI function definition (name, description, parameters)
+- Executor function that calls existing Redis/QStash operations
+
 #### `llm.ts`
 **Purpose:** All LLM interactions (OpenRouter API)
 **Configuration:**
-- Separate models for chat vs intent parsing
-- Custom parameters per model (temperature, reasoning)
+- Configurable model
+- Custom parameters (temperature, reasoning)
 - Timezone-aware prompts
 - Conversation context injection
 - Braintrust tracing
 
 **Key Functions:**
 
-**Intent Parsing:**
-- `parseIntent()` - Converts user message to structured intent(s)
-  - Includes last 10 messages for context (plain text format, not JSON)
-  - Handles ambiguous references ("that list", "the task", "those items")
-  - Can return single intent or array of intents
-  - Falls back to conversation intent on parse failure
-  - Distinguishes between cancel_task (reminders) and modify_list (list items)
-  - Properly handles day-only vs timed reminders (isDayOnly flag)
+**Agent Support:**
+- `callLLMWithTools()` - LLM call with tool definitions for agentic loop
+  - Returns tool calls or text response
+  - Used by agent.ts for iterative processing
 
 **Message Generation:**
 - `generateReminderMessage()` - First reminder notification
@@ -265,11 +299,10 @@ Defines all TypeScript interfaces and types:
 - `generateEndOfDayMessage()` - Evening reflection prompt
 - `generateMorningReviewMessage()` - Morning briefing
 - `generateWeeklyInsights()` - Sunday summary with patterns
-- `generateActionResponse()` - Confirms user actions
 - `generateConversationSummary()` - Summarizes old messages
 
-**Tama Personality:**
-All LLM calls inject the "Tama" personality:
+**Mika Personality:**
+All LLM calls inject the "Mika" personality:
 - Warm, patient, genuinely curious
 - Cares about user wellbeing, not productivity
 - Short conversational style
@@ -323,18 +356,25 @@ All cron expressions are prefixed with `CRON_TZ={timezone}` for user-specific ti
 
 ## Data Flow
 
-### User Sends Message
+### User Sends Message (Agentic Loop)
 ```
 1. User → Telegram API
 2. Telegram API → /api/telegram (webhook)
 3. /api/telegram:
    a. If voice: Download → Whisper → Transcribe
    b. Load conversation history from Redis
-   c. Parse intent via LLM
-   d. Handle intent (update Redis, schedule QStash)
-   e. Generate response via LLM
-   f. Save conversation to Redis
+   c. Run agent loop:
+      - LLM decides: need more info? → call read tool
+      - LLM decides: perform action? → call write tool
+      - Tool results fed back to LLM
+      - Loop continues until LLM responds with text
+   d. Save conversation to Redis
 4. /api/telegram → Telegram API → User
+
+Example: "Reschedule my dentist to Monday"
+  Loop 1: LLM calls search_reminders({query: "dentist"})
+  Loop 2: LLM calls cancel_reminder({id: "..."}) + create_reminder({...monday})
+  Loop 3: LLM responds: "Done! Moved your dentist appointment to Monday."
 ```
 
 ### Scheduled Reminder Fires
@@ -405,8 +445,12 @@ All cron expressions are prefixed with `CRON_TZ={timezone}` for user-specific ti
 
 ## Key Design Patterns
 
-### 1. Intent-Based Architecture
-User messages are converted to structured intents before processing. This decouples natural language understanding from business logic.
+### 1. Agentic Loop Architecture
+User messages are processed through an iterative tool-calling loop:
+- LLM can call read tools to gather context before acting
+- LLM can call multiple write tools to perform complex operations
+- Loop continues until LLM is ready to respond with text
+- Handles multi-step operations naturally (e.g., "reschedule X to Y" = search → cancel → create)
 
 ### 2. Conversation Context Injection
 Every LLM call receives conversation history and summary, allowing coherent multi-turn conversations without re-explaining context.
@@ -747,12 +791,13 @@ For local testing with Telegram:
 
 ## Recent Improvements
 
-1. **Intent Parsing Enhancements (December 2025):**
-   - Changed conversation history from JSON to plain text format
-   - Prevents LLM from mimicking conversation format in responses
-   - Added clear examples for show_list vs inbox intents
-   - Clarified cancel_task (reminders only) vs modify_list (list items)
-   - Improved context rules for inferring list references
+1. **Agentic Loop Architecture (January 2026):**
+   - Replaced single-shot intent parsing with iterative tool-calling loop
+   - LLM can now execute multiple tools to handle complex requests
+   - Better handling of vague requests (searches first, then acts)
+   - 22 tools defined for all bot operations
+   - Handles multi-step operations (e.g., "reschedule X to Y")
+   - Safeguards: max 10 iterations, 25s timeout, consecutive error limit
 
 2. **Day-Only Reminders:**
    - Added isDayOnly flag to distinguish day-only from timed reminders
