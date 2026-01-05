@@ -129,16 +129,16 @@ export default async function handler(
     const conversationData = await redis.getConversationData(chatId);
 
     // Run the agentic loop
-    console.log(`[${chatId}] Starting agent loop for: "${userText.substring(0, 50)}..."`);
-    const response = await runAgentLoop(
-      chatId,
-      userText,
-      {
-        messages: conversationData.messages,
-        summary: conversationData.summary,
-      },
+    console.log(
+      `[${chatId}] Starting agent loop for: "${userText.substring(0, 50)}..."`,
     );
-    console.log(`[${chatId}] Agent loop complete, response length: ${response.length}`);
+    const response = await runAgentLoop(chatId, userText, {
+      messages: conversationData.messages,
+      summary: conversationData.summary,
+    });
+    console.log(
+      `[${chatId}] Agent loop complete, response length: ${response.length}`,
+    );
 
     // Send response to user
     await telegram.sendMessage(chatId, response);
@@ -400,7 +400,8 @@ async function handleScheduleDebugCommand(chatId: number): Promise<void> {
   lines.push("");
 
   // QStash schedules (actual schedules from QStash API)
-  const expectedBaseUrl = process.env.BASE_URL || `https://${process.env.VERCEL_URL || "unknown"}`;
+  const expectedBaseUrl =
+    process.env.BASE_URL || `https://${process.env.VERCEL_URL || "unknown"}`;
   const thisBotSchedules = qstashSchedules.filter((s) =>
     s.destination.startsWith(expectedBaseUrl),
   );
@@ -689,6 +690,9 @@ async function setupDefaultSchedules(chatId: number): Promise<void> {
     prefs.morningReviewTime = `${defaultMorningHour.toString().padStart(2, "0")}:${defaultMorningMinute.toString().padStart(2, "0")}`;
     prefs.morningReviewScheduleId = morningReviewScheduleId;
     await redis.saveUserPreferences(prefs);
+
+    // Initialize default activity blocks for new users
+    await redis.initializeDefaultBlocks(chatId);
 
     console.log(`Set up default schedules for new user ${chatId}`);
   } catch (error) {

@@ -1144,21 +1144,23 @@ export async function generateBodyDoublingCheckInMessage(
       : `${Math.floor(elapsedMinutes / 60)} hour${Math.floor(elapsedMinutes / 60) > 1 ? "s" : ""}${elapsedMinutes % 60 > 0 ? ` and ${elapsedMinutes % 60} minutes` : ""}`;
 
   const checkInStyles: Record<number, string> = {
-    1: "This is the first check-in. Be warm and curious about how it's going. Maybe a light 'still here with you' vibe.",
-    2: "Second check-in. Acknowledge they've been at it for a while. Gentle encouragement.",
-    3: "Third check-in. They're really in it now. Brief acknowledgment, maybe a tiny celebration of persistence.",
-    4: "Fourth check-in or later. Keep it light and brief. They know you're here.",
+    1: "First check-in. Warm and curious - maybe ask how it's going or give a 'still here with you' vibe.",
+    2: "Second check-in. Acknowledge they've been at it a while. Could be encouraging, or just a brief presence check.",
+    3: "Third check-in. They're in the zone. Could celebrate their persistence, check progress, or just be brief and supportive.",
+    4: "Fourth+ check-in. Vary your approach - sometimes brief ('still here'), sometimes ask about progress, sometimes offer encouragement. Keep it fresh.",
   };
 
   const style = checkInStyles[Math.min(checkInCount, 4)];
 
   const systemPrompt = `${MIKA_PERSONALITY}
 
-You're body doubling with the user - they're working on something and you're checking in periodically to help them stay focused. This is check-in #${checkInCount}.
+You're body doubling with the user - keeping them company while they work on something. This is check-in #${checkInCount}.
 
 ${style}
 
-Keep it to 1-2 sentences. Ask how it's going or offer gentle encouragement. Remind them they can say "I'm done" when finished, or let you know if they want to switch to something else. Don't be pushy - you're just here, keeping them company.`;
+IMPORTANT: Generate a natural, varied response. DO NOT use formulaic phrases like "Say 'I'm done' when you're ready" or "let me know if you want to switch" - you've already told them how to end the session. Just be present, ask how it's going, or offer encouragement. Vary your messages so they don't feel repetitive.
+
+Keep it to 1-2 short sentences. Be genuine, not scripted.`;
 
   const taskPrompt = `Body doubling check-in. They've been working on "${focusTask}" for ${timeDescription}. This is check-in #${checkInCount}.`;
 

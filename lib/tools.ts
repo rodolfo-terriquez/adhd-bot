@@ -152,6 +152,19 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_blocks",
+      description:
+        "Get all the user's activity blocks (time blocks for organizing their day). Returns block name, time range, days active, energy profile, and any tasks/habits assigned to them.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
 
   // WRITE TOOLS
   {
@@ -678,6 +691,58 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
       currentTime: getCurrentTimeContext(),
       timezone: getUserTimezone(),
     });
+  },
+
+  get_blocks: async (chatId) => {
+    // Initialize default blocks if none exist
+    const blocks = await redis.initializeDefaultBlocks(chatId);
+
+    if (blocks.length === 0) {
+      return JSON.stringify({ blocks: [], message: "No blocks set up" });
+    }
+
+    const today = new Date().toISOString().split("T")[0];
+    const blocksWithDetails = await Promise.all(
+      blocks.map(async (block) => {
+        // Get tasks assigned to this block for today
+        const taskIds = await redis.getTasksForBlock(chatId, block.id, today);
+        const tasks: string[] = [];
+        for (const taskId of taskIds) {
+          const task = await redis.getTask(chatId, taskId);
+          if (task && task.status === "pending") {
+            tasks.push(task.content);
+          }
+        }
+
+        // Get habits assigned to this block
+        const habitIds = await redis.getHabitsForBlock(chatId, block.id, today);
+        const habits: Array<{ name: string; completedToday: boolean }> = [];
+        for (const habitId of habitIds) {
+          const habit = await redis.getHabit(chatId, habitId);
+          if (habit && habit.status === "active") {
+            const completedToday = await redis.isHabitCompletedToday(
+              chatId,
+              habitId,
+            );
+            habits.push({ name: habit.name, completedToday });
+          }
+        }
+
+        return {
+          id: block.id,
+          name: block.name,
+          timeRange: `${block.startTime}-${block.endTime}`,
+          days: block.days.join(", "),
+          energyProfile: block.energyProfile,
+          taskCategories: block.taskCategories,
+          tasks,
+          habits,
+          status: block.status,
+        };
+      }),
+    );
+
+    return JSON.stringify({ blocks: blocksWithDetails });
   },
 
   // WRITE TOOLS
