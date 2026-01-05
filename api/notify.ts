@@ -5,6 +5,7 @@ import * as redis from "../lib/redis.js";
 import {
   scheduleReminder,
   scheduleFollowUp,
+  scheduleBodyDoublingCheckIn,
   verifySignature,
 } from "../lib/qstash.js";
 import {
@@ -20,6 +21,7 @@ import {
   generateBlockStartMessage,
   generateBlockEndMessage,
   generateEnergyCheckMessage,
+  generateBodyDoublingCheckInMessage,
   ConversationContext,
   WeeklyHabitStats,
 } from "../lib/llm.js";
@@ -99,6 +101,10 @@ export default async function handler(
 
       case "energy_check":
         await handleEnergyCheck(payload);
+        break;
+
+      case "body_doubling_checkin":
+        await handleBodyDoublingCheckIn(payload);
         break;
 
       default:
@@ -215,16 +221,24 @@ async function handleWeeklySummary(
 ): Promise<void> {
   const { chatId } = payload;
 
-  // Get weekly check-ins, brain dumps, and habit stats
-  const [checkIns, dumps, completedTaskCount, habitStats] = await Promise.all([
-    redis.getWeeklyCheckIns(chatId),
-    redis.getWeeklyDumps(chatId),
-    redis.getWeeklyCompletedTaskCount(chatId),
-    redis.getWeeklyHabitStats(chatId),
-  ]);
+  // Get weekly check-ins, brain dumps, habit stats, and body doubling stats
+  const [checkIns, dumps, completedTaskCount, habitStats, bodyDoublingStats] =
+    await Promise.all([
+      redis.getWeeklyCheckIns(chatId),
+      redis.getWeeklyDumps(chatId),
+      redis.getWeeklyCompletedTaskCount(chatId),
+      redis.getWeeklyHabitStats(chatId),
+      redis.getWeeklyBodyDoublingStats(chatId),
+    ]);
 
   // Only send if there's any data
-  if (checkIns.length === 0 && dumps.length === 0 && completedTaskCount === 0 && habitStats.length === 0) {
+  if (
+    checkIns.length === 0 &&
+    dumps.length === 0 &&
+    completedTaskCount === 0 &&
+    habitStats.length === 0 &&
+    bodyDoublingStats.sessions === 0
+  ) {
     return;
   }
 
@@ -245,6 +259,7 @@ async function handleWeeklySummary(
     completedTaskCount,
     context,
     formattedHabitStats.length > 0 ? formattedHabitStats : undefined,
+    bodyDoublingStats.sessions > 0 ? bodyDoublingStats : undefined,
   );
 
   await telegram.sendMessage(chatId, insights);
@@ -298,7 +313,14 @@ async function handleMorningReview(
   const { chatId } = payload;
 
   // Get inbox items, overdue tasks, today's tasks, energy patterns, and habits
-  const [inboxItems, overdueTasks, todaysTasks, energyPattern, blocks, todaysHabits] = await Promise.all([
+  const [
+    inboxItems,
+    overdueTasks,
+    todaysTasks,
+    energyPattern,
+    blocks,
+    todaysHabits,
+  ] = await Promise.all([
     redis.getUncheckedInboxItems(chatId),
     redis.getOverdueTasks(chatId),
     redis.getTodaysTasks(chatId),
@@ -326,28 +348,51 @@ async function handleMorningReview(
   }));
 
   // Build energy insights if we have enough data
-  let energyInsights: {
-    predictedMorningEnergy: "high" | "medium" | "low";
-    predictedAfternoonEnergy: "high" | "medium" | "low";
-    bestTimeForHardTasks?: string;
-    dataPoints: number;
-  } | undefined;
+  let energyInsights:
+    | {
+        predictedMorningEnergy: "high" | "medium" | "low";
+        predictedAfternoonEnergy: "high" | "medium" | "low";
+        bestTimeForHardTasks?: string;
+        dataPoints: number;
+      }
+    | undefined;
 
   if (energyPattern.dataPoints >= 3) {
     // Get today's day of week
-    const dayNames: Array<"sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday"> =
-      ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+    const dayNames: Array<
+      | "sunday"
+      | "monday"
+      | "tuesday"
+      | "wednesday"
+      | "thursday"
+      | "friday"
+      | "saturday"
+    > = [
+      "sunday",
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday",
+    ];
     const today = dayNames[new Date().getDay()];
 
     // Predict morning energy (average of hours 8-11)
     const morningHours = [8, 9, 10, 11];
-    const morningAvg = morningHours.reduce((sum, h) =>
-      sum + (energyPattern.hourlyAverages[h] || 3), 0) / morningHours.length;
+    const morningAvg =
+      morningHours.reduce(
+        (sum, h) => sum + (energyPattern.hourlyAverages[h] || 3),
+        0,
+      ) / morningHours.length;
 
     // Predict afternoon energy (average of hours 14-17)
     const afternoonHours = [14, 15, 16, 17];
-    const afternoonAvg = afternoonHours.reduce((sum, h) =>
-      sum + (energyPattern.hourlyAverages[h] || 3), 0) / afternoonHours.length;
+    const afternoonAvg =
+      afternoonHours.reduce(
+        (sum, h) => sum + (energyPattern.hourlyAverages[h] || 3),
+        0,
+      ) / afternoonHours.length;
 
     const toLevel = (avg: number): "high" | "medium" | "low" => {
       if (avg >= 3.5) return "high";
@@ -359,10 +404,11 @@ async function handleMorningReview(
     let bestTimeForHardTasks: string | undefined;
     if (blocks.length > 0) {
       const blockScores = blocks
-        .filter(b => b.days.includes(today) && b.energyProfile !== "low")
-        .map(b => ({
+        .filter((b) => b.days.includes(today) && b.energyProfile !== "low")
+        .map((b) => ({
           block: b,
-          score: energyPattern.blockAverages[b.id] ||
+          score:
+            energyPattern.blockAverages[b.id] ||
             (b.energyProfile === "high" ? 4 : 3),
         }))
         .sort((a, b) => b.score - a.score);
@@ -417,7 +463,10 @@ async function handleMorningReview(
   await telegram.sendMessage(chatId, message);
 }
 
-function formatScheduledTime(timestamp: number, isDayOnly: boolean = false): string {
+function formatScheduledTime(
+  timestamp: number,
+  isDayOnly: boolean = false,
+): string {
   // For day-only reminders, show "anytime" or similar
   if (isDayOnly) {
     return "anytime";
@@ -448,6 +497,76 @@ function formatOverdueTime(timestamp: number): string {
 
   const days = Math.floor(hours / 24);
   return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+// ==========================================
+// Body Doubling Check-in Handler
+// ==========================================
+
+async function handleBodyDoublingCheckIn(
+  payload: NotificationPayload,
+): Promise<void> {
+  const { chatId, sessionId } = payload;
+
+  if (!sessionId) {
+    console.error("Body doubling check-in missing sessionId");
+    return;
+  }
+
+  // Check if user has vacation mode enabled
+  const prefs = await redis.getUserPreferences(chatId);
+  if (prefs?.vacationMode) {
+    console.log(
+      `Skipping body doubling check-in for ${chatId} - vacation mode enabled`,
+    );
+    return;
+  }
+
+  // Get the active session
+  const session = await redis.getActiveBodyDoublingSession(chatId);
+
+  if (!session || session.id !== sessionId || session.status !== "active") {
+    // Session ended or doesn't match, no check-in needed
+    console.log(`Body doubling session ${sessionId} is no longer active`);
+    return;
+  }
+
+  // Increment the check-in count
+  await redis.incrementBodyDoublingCheckIn(chatId);
+
+  // Calculate elapsed time
+  const elapsedMinutes = Math.floor((Date.now() - session.startedAt) / 60000);
+
+  // Get conversation context
+  const context = await getContext(chatId);
+
+  // Generate the check-in message
+  const message = await generateBodyDoublingCheckInMessage(
+    session.focusTask,
+    session.checkInCount + 1, // +1 because we just incremented
+    elapsedMinutes,
+    context,
+  );
+
+  await telegram.sendMessage(chatId, message);
+
+  // Schedule the next check-in
+  try {
+    const nextMessageId = await scheduleBodyDoublingCheckIn(
+      chatId,
+      session.id,
+      session.intervalMinutes,
+    );
+
+    // Update session with new QStash message ID
+    const updatedSession = await redis.getActiveBodyDoublingSession(chatId);
+    if (updatedSession) {
+      updatedSession.qstashMessageId = nextMessageId;
+      await redis.updateBodyDoublingSession(updatedSession);
+    }
+  } catch (error) {
+    console.error("Failed to schedule next body doubling check-in:", error);
+  }
 }
 
 // ==========================================
@@ -583,9 +702,10 @@ async function handleBlockEnd(payload: NotificationPayload): Promise<void> {
   // Find next block (simple implementation - would need proper scheduling logic)
   const allBlocks = await redis.getAllBlocks(chatId);
   const currentIndex = allBlocks.findIndex((b) => b.id === blockId);
-  const nextBlock = currentIndex >= 0 && currentIndex < allBlocks.length - 1
-    ? allBlocks[currentIndex + 1]
-    : undefined;
+  const nextBlock =
+    currentIndex >= 0 && currentIndex < allBlocks.length - 1
+      ? allBlocks[currentIndex + 1]
+      : undefined;
 
   // Clear current block
   await redis.clearCurrentBlock(chatId);
@@ -600,7 +720,8 @@ async function handleBlockEnd(payload: NotificationPayload): Promise<void> {
       completedTasks,
       remainingTasks,
       completedHabits: completedHabits.length > 0 ? completedHabits : undefined,
-      incompleteHabits: incompleteHabits.length > 0 ? incompleteHabits : undefined,
+      incompleteHabits:
+        incompleteHabits.length > 0 ? incompleteHabits : undefined,
       nextBlockName: nextBlock?.name,
     },
     context,

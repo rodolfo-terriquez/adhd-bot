@@ -60,6 +60,33 @@ You help the user manage their tasks, reminders, lists, and habits. You have acc
    - Stay in character as Mika
    - Use 🐾 occasionally when it feels natural
 
+## Body Doubling (Focus Sessions)
+When the user wants to focus on a task, you can start a body doubling session that checks in on them periodically.
+
+**Starting a session** - Call start_body_doubling when the user says things like:
+- "Let's focus on...", "I need to focus on...", "Help me focus on..."
+- "Body double with me on...", "Let's work on...", "Help me work on..."
+- "Can you keep me accountable while I...", "I need to buckle down on..."
+
+**During check-ins** - When you send a check-in message:
+- Ask how they're doing on their task
+- Provide gentle encouragement
+- Remind them they can say "I'm done" or change focus if needed
+
+**Ending a session** - Call end_body_doubling when the user says:
+- "I'm done", "Finished", "Completed the task" → completed: true
+- "I stopped", "I gave up", "Not working on it anymore" → completed: false
+- "Taking a break", "Need to stop" → completed: false
+
+**Changing focus** - Call update_body_doubling_focus when:
+- "I'm now working on X", "Switching to X", "Actually let me focus on Y instead"
+
+**Keep session going** when user:
+- Gives progress updates ("Making progress", "About halfway done")
+- Vents or shares feelings ("This is hard", "Getting frustrated")
+- Asks questions about the task
+Just respond supportively without ending the session.
+
 ## Important Rules
 - Never invent or assume task IDs - always look them up first
 - When searching for tasks to modify, search first, then act on the returned IDs
@@ -87,7 +114,10 @@ function buildMessagesWithContext(
   }
 
   // Add recent conversation history
-  if (conversationContext?.messages && conversationContext.messages.length > 0) {
+  if (
+    conversationContext?.messages &&
+    conversationContext.messages.length > 0
+  ) {
     for (const msg of conversationContext.messages.slice(-10)) {
       messages.push({
         role: msg.role,
@@ -142,14 +172,17 @@ export async function runAgentLoop(
 
       // If no tool calls, we're done - return the text response
       if (response.toolCalls.length === 0) {
-        return response.content || "I'm not sure how to help with that. Could you try saying it another way?";
+        return (
+          response.content ||
+          "I'm not sure how to help with that. Could you try saying it another way?"
+        );
       }
 
       // Add assistant message with tool calls to history
       messages.push({
         role: "assistant",
         content: response.content,
-        tool_calls: response.toolCalls.map(tc => ({
+        tool_calls: response.toolCalls.map((tc) => ({
           id: tc.id,
           type: "function" as const,
           function: {
@@ -166,14 +199,23 @@ export async function runAgentLoop(
         try {
           input = JSON.parse(toolCall.function.arguments);
         } catch {
-          console.error(`Failed to parse tool arguments: ${toolCall.function.arguments}`);
+          console.error(
+            `Failed to parse tool arguments: ${toolCall.function.arguments}`,
+          );
         }
 
         console.log(`Agent: Executing tool ${toolCall.function.name}`, input);
 
-        const { result, isError } = await executeTool(chatId, toolCall.function.name, input);
+        const { result, isError } = await executeTool(
+          chatId,
+          toolCall.function.name,
+          input,
+        );
 
-        console.log(`Agent: Tool result (error=${isError}):`, result.substring(0, 200));
+        console.log(
+          `Agent: Tool result (error=${isError}):`,
+          result.substring(0, 200),
+        );
 
         if (!isError) {
           allErrors = false;
@@ -191,7 +233,9 @@ export async function runAgentLoop(
       if (allErrors) {
         consecutiveErrors++;
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          console.warn(`Agent loop: ${MAX_CONSECUTIVE_ERRORS} consecutive errors, terminating`);
+          console.warn(
+            `Agent loop: ${MAX_CONSECUTIVE_ERRORS} consecutive errors, terminating`,
+          );
           return "I'm having trouble completing that request. Could you try something simpler or say it another way?";
         }
       } else {
@@ -206,6 +250,8 @@ export async function runAgentLoop(
   }
 
   // Max iterations reached
-  console.warn(`Agent loop: max iterations (${fullConfig.maxIterations}) reached`);
+  console.warn(
+    `Agent loop: max iterations (${fullConfig.maxIterations}) reached`,
+  );
   return "I got a bit lost in thought there. Could you try a simpler request?";
 }

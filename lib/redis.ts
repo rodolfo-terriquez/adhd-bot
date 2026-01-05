@@ -16,6 +16,9 @@ import type {
   EnergyLevel,
   Habit,
   HabitCompletion,
+  // Body doubling
+  BodyDoublingSession,
+  BodyDoublingStats,
 } from "./types.js";
 
 let redisClient: Redis | null = null;
@@ -32,37 +35,53 @@ function getClient(): Redis {
 const getKeyPrefix = (): string => process.env.REDIS_KEY_PREFIX || "";
 
 // Key patterns (all include prefix for multi-project isolation)
-const TASK_KEY = (chatId: number, taskId: string) => `${getKeyPrefix()}task:${chatId}:${taskId}`;
+const TASK_KEY = (chatId: number, taskId: string) =>
+  `${getKeyPrefix()}task:${chatId}:${taskId}`;
 const TASKS_SET_KEY = (chatId: number) => `${getKeyPrefix()}tasks:${chatId}`;
-const DUMP_KEY = (chatId: number, dumpId: string) => `${getKeyPrefix()}dump:${chatId}:${dumpId}`;
+const DUMP_KEY = (chatId: number, dumpId: string) =>
+  `${getKeyPrefix()}dump:${chatId}:${dumpId}`;
 const DUMPS_SET_KEY = (chatId: number, date: string) =>
   `${getKeyPrefix()}dumps:${chatId}:${date}`;
 const CHECKIN_KEY = (chatId: number, date: string) =>
   `${getKeyPrefix()}checkin:${chatId}:${date}`;
-const CHECKINS_SET_KEY = (chatId: number) => `${getKeyPrefix()}checkins:${chatId}`;
-const USER_PREFS_KEY = (chatId: number) => `${getKeyPrefix()}user_prefs:${chatId}`;
-const AWAITING_CHECKIN_KEY = (chatId: number) => `${getKeyPrefix()}awaiting_checkin:${chatId}`;
-const PENDING_FOLLOW_UP_KEY = (chatId: number) => `${getKeyPrefix()}pending_follow_up:${chatId}`;
+const CHECKINS_SET_KEY = (chatId: number) =>
+  `${getKeyPrefix()}checkins:${chatId}`;
+const USER_PREFS_KEY = (chatId: number) =>
+  `${getKeyPrefix()}user_prefs:${chatId}`;
+const AWAITING_CHECKIN_KEY = (chatId: number) =>
+  `${getKeyPrefix()}awaiting_checkin:${chatId}`;
+const PENDING_FOLLOW_UP_KEY = (chatId: number) =>
+  `${getKeyPrefix()}pending_follow_up:${chatId}`;
 const COMPLETED_TASKS_KEY = (chatId: number, date: string) =>
   `${getKeyPrefix()}completed:${chatId}:${date}`;
 
 // List key patterns
-const LIST_KEY = (chatId: number, listId: string) => `${getKeyPrefix()}list:${chatId}:${listId}`;
+const LIST_KEY = (chatId: number, listId: string) =>
+  `${getKeyPrefix()}list:${chatId}:${listId}`;
 const LISTS_SET_KEY = (chatId: number) => `${getKeyPrefix()}lists:${chatId}`;
 
 // V2 key patterns
-const BLOCK_KEY = (chatId: number, blockId: string) => `${getKeyPrefix()}block:${chatId}:${blockId}`;
+const BLOCK_KEY = (chatId: number, blockId: string) =>
+  `${getKeyPrefix()}block:${chatId}:${blockId}`;
 const BLOCKS_SET_KEY = (chatId: number) => `${getKeyPrefix()}blocks:${chatId}`;
-const ENERGY_LOG_KEY = (chatId: number, logId: string) => `${getKeyPrefix()}energy_log:${chatId}:${logId}`;
-const ENERGY_LOGS_SET_KEY = (chatId: number, date: string) => `${getKeyPrefix()}energy_logs:${chatId}:${date}`;
-const ENERGY_PATTERN_KEY = (chatId: number) => `${getKeyPrefix()}energy_pattern:${chatId}`;
-const CAPTURED_KEY = (chatId: number, capturedId: string) => `${getKeyPrefix()}captured:${chatId}:${capturedId}`;
-const CAPTURED_PENDING_KEY = (chatId: number) => `${getKeyPrefix()}captured_pending:${chatId}`;
-const BLOCK_TASKS_KEY = (chatId: number, blockId: string, date: string) => `${getKeyPrefix()}block_tasks:${chatId}:${blockId}:${date}`;
-const CURRENT_BLOCK_KEY = (chatId: number) => `${getKeyPrefix()}current_block:${chatId}`;
+const ENERGY_LOG_KEY = (chatId: number, logId: string) =>
+  `${getKeyPrefix()}energy_log:${chatId}:${logId}`;
+const ENERGY_LOGS_SET_KEY = (chatId: number, date: string) =>
+  `${getKeyPrefix()}energy_logs:${chatId}:${date}`;
+const ENERGY_PATTERN_KEY = (chatId: number) =>
+  `${getKeyPrefix()}energy_pattern:${chatId}`;
+const CAPTURED_KEY = (chatId: number, capturedId: string) =>
+  `${getKeyPrefix()}captured:${chatId}:${capturedId}`;
+const CAPTURED_PENDING_KEY = (chatId: number) =>
+  `${getKeyPrefix()}captured_pending:${chatId}`;
+const BLOCK_TASKS_KEY = (chatId: number, blockId: string, date: string) =>
+  `${getKeyPrefix()}block_tasks:${chatId}:${blockId}:${date}`;
+const CURRENT_BLOCK_KEY = (chatId: number) =>
+  `${getKeyPrefix()}current_block:${chatId}`;
 
 // Habit key patterns
-const HABIT_KEY = (chatId: number, habitId: string) => `${getKeyPrefix()}habit:${chatId}:${habitId}`;
+const HABIT_KEY = (chatId: number, habitId: string) =>
+  `${getKeyPrefix()}habit:${chatId}:${habitId}`;
 const HABITS_SET_KEY = (chatId: number) => `${getKeyPrefix()}habits:${chatId}`;
 const HABIT_COMPLETION_KEY = (chatId: number, habitId: string, date: string) =>
   `${getKeyPrefix()}habit_completion:${chatId}:${habitId}:${date}`;
@@ -70,6 +89,14 @@ const HABIT_COMPLETIONS_SET_KEY = (chatId: number, habitId: string) =>
   `${getKeyPrefix()}habit_completions:${chatId}:${habitId}`;
 const BLOCK_HABITS_KEY = (chatId: number, blockId: string, date: string) =>
   `${getKeyPrefix()}block_habits:${chatId}:${blockId}:${date}`;
+
+// Body doubling key patterns
+const BODY_DOUBLING_CURRENT_KEY = (chatId: number) =>
+  `${getKeyPrefix()}bodydoubling:${chatId}:current`;
+const BODY_DOUBLING_SESSION_KEY = (chatId: number, sessionId: string) =>
+  `${getKeyPrefix()}bodydoubling:${chatId}:${sessionId}`;
+const BODY_DOUBLING_SESSIONS_SET_KEY = (chatId: number) =>
+  `${getKeyPrefix()}bodydoubling_sessions:${chatId}`;
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -136,7 +163,9 @@ export async function completeTask(
 
   // Save completed task with TTL (7 days for debugging/inspection)
   const TTL_7_DAYS = 7 * 24 * 60 * 60;
-  await redis.set(TASK_KEY(chatId, task.id), JSON.stringify(task), { ex: TTL_7_DAYS });
+  await redis.set(TASK_KEY(chatId, task.id), JSON.stringify(task), {
+    ex: TTL_7_DAYS,
+  });
 
   await redis.srem(TASKS_SET_KEY(chatId), taskId);
 
@@ -189,11 +218,11 @@ export async function getPendingTasks(chatId: number): Promise<Task[]> {
 function stripSchedulingMetadata(description: string): string {
   return description
     .toLowerCase()
-    .replace(/@\w+\s+[\d:]+\s+[ap]m/gi, '') // Remove @day time patterns
-    .replace(/\(overdue\)/gi, '') // Remove (overdue)
-    .replace(/\(important\)/gi, '') // Remove (important)
-    .replace(/['']/g, '') // Remove apostrophes for better matching
-    .replace(/\s+/g, ' ') // Normalize multiple spaces to single space
+    .replace(/@\w+\s+[\d:]+\s+[ap]m/gi, "") // Remove @day time patterns
+    .replace(/\(overdue\)/gi, "") // Remove (overdue)
+    .replace(/\(important\)/gi, "") // Remove (important)
+    .replace(/['']/g, "") // Remove apostrophes for better matching
+    .replace(/\s+/g, " ") // Normalize multiple spaces to single space
     .trim();
 }
 
@@ -228,7 +257,9 @@ export async function findTasksByDescriptions(
   descriptions: string[],
 ): Promise<Task[]> {
   const tasks = await getPendingTasks(chatId);
-  console.log(`[Redis] findTasksByDescriptions: ${descriptions.length} descriptions, ${tasks.length} pending tasks`);
+  console.log(
+    `[Redis] findTasksByDescriptions: ${descriptions.length} descriptions, ${tasks.length} pending tasks`,
+  );
 
   if (tasks.length === 0) return [];
 
@@ -238,15 +269,20 @@ export async function findTasksByDescriptions(
   for (const description of descriptions) {
     // Strip scheduling metadata and normalize both description and task content
     const normalizedDesc = stripSchedulingMetadata(description);
-    console.log(`[Redis] Searching for: "${description}" → normalized: "${normalizedDesc}"`);
+    console.log(
+      `[Redis] Searching for: "${description}" → normalized: "${normalizedDesc}"`,
+    );
 
     const matchedTask = tasks.find((t) => {
       if (usedTaskIds.has(t.id)) return false;
       const normalizedTaskContent = stripSchedulingMetadata(t.content);
-      const matches = normalizedTaskContent.includes(normalizedDesc) ||
-                      normalizedDesc.includes(normalizedTaskContent);
+      const matches =
+        normalizedTaskContent.includes(normalizedDesc) ||
+        normalizedDesc.includes(normalizedTaskContent);
 
-      console.log(`[Redis]   vs task: "${t.content}" → normalized: "${normalizedTaskContent}" → match: ${matches}`);
+      console.log(
+        `[Redis]   vs task: "${t.content}" → normalized: "${normalizedTaskContent}" → match: ${matches}`,
+      );
       return matches;
     });
 
@@ -277,11 +313,15 @@ export async function getTodaysTasks(chatId: number): Promise<Task[]> {
   const now = new Date();
 
   // Start of today (00:00:00)
-  const startOfDay = new Date(now.toLocaleString("en-US", { timeZone: timezone }));
+  const startOfDay = new Date(
+    now.toLocaleString("en-US", { timeZone: timezone }),
+  );
   startOfDay.setHours(0, 0, 0, 0);
 
   // End of today (23:59:59)
-  const endOfDay = new Date(now.toLocaleString("en-US", { timeZone: timezone }));
+  const endOfDay = new Date(
+    now.toLocaleString("en-US", { timeZone: timezone }),
+  );
   endOfDay.setHours(23, 59, 59, 999);
 
   const startTimestamp = startOfDay.getTime();
@@ -289,7 +329,8 @@ export async function getTodaysTasks(chatId: number): Promise<Task[]> {
 
   // Return tasks scheduled for today (between start and end of day)
   return tasks.filter(
-    (task) => task.nextReminder >= startTimestamp && task.nextReminder <= endTimestamp
+    (task) =>
+      task.nextReminder >= startTimestamp && task.nextReminder <= endTimestamp,
   );
 }
 
@@ -709,7 +750,8 @@ export async function getActiveChats(): Promise<number[]> {
 }
 
 // Conversation memory
-const CONVERSATION_KEY = (chatId: number) => `${getKeyPrefix()}conversation:${chatId}`;
+const CONVERSATION_KEY = (chatId: number) =>
+  `${getKeyPrefix()}conversation:${chatId}`;
 const MAX_CONVERSATION_PAIRS = 30; // Trigger summarization at 30 pairs
 const RECENT_PAIRS_TO_KEEP = 10; // Keep 10 most recent pairs verbatim after summarization
 
@@ -1065,7 +1107,9 @@ export async function deleteActivityBlock(
   return block;
 }
 
-export async function getActiveBlocks(chatId: number): Promise<ActivityBlock[]> {
+export async function getActiveBlocks(
+  chatId: number,
+): Promise<ActivityBlock[]> {
   const redis = getClient();
   const blockIds = await redis.smembers<string[]>(BLOCKS_SET_KEY(chatId));
 
@@ -1107,13 +1151,18 @@ export async function findBlockByName(
   const blocks = await getAllBlocks(chatId);
   const normalizedName = name.toLowerCase().trim();
 
-  return blocks.find(
-    (b) => b.name.toLowerCase().includes(normalizedName) ||
-           normalizedName.includes(b.name.toLowerCase())
-  ) || null;
+  return (
+    blocks.find(
+      (b) =>
+        b.name.toLowerCase().includes(normalizedName) ||
+        normalizedName.includes(b.name.toLowerCase()),
+    ) || null
+  );
 }
 
-export async function getCurrentBlock(chatId: number): Promise<ActivityBlock | null> {
+export async function getCurrentBlock(
+  chatId: number,
+): Promise<ActivityBlock | null> {
   const blocks = await getActiveBlocks(chatId);
   if (blocks.length === 0) return null;
 
@@ -1126,7 +1175,15 @@ export async function getCurrentBlock(chatId: number): Promise<ActivityBlock | n
     minute: "2-digit",
   });
 
-  const dayNames: DayOfWeek[] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const dayNames: DayOfWeek[] = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+  ];
   const currentDay = dayNames[now.getDay()];
 
   for (const block of blocks) {
@@ -1140,7 +1197,10 @@ export async function getCurrentBlock(chatId: number): Promise<ActivityBlock | n
 }
 
 // Explicitly set the current block (for block start notifications)
-export async function setCurrentBlock(chatId: number, blockId: string): Promise<void> {
+export async function setCurrentBlock(
+  chatId: number,
+  blockId: string,
+): Promise<void> {
   const redis = getClient();
   // Set with 24 hour TTL (will be cleared when block ends)
   await redis.set(CURRENT_BLOCK_KEY(chatId), blockId, { ex: 24 * 60 * 60 });
@@ -1152,7 +1212,10 @@ export async function clearCurrentBlock(chatId: number): Promise<void> {
 }
 
 // Default blocks for new users
-const DEFAULT_BLOCKS: Omit<ActivityBlock, "id" | "chatId" | "createdAt" | "updatedAt">[] = [
+const DEFAULT_BLOCKS: Omit<
+  ActivityBlock,
+  "id" | "chatId" | "createdAt" | "updatedAt"
+>[] = [
   {
     name: "Morning Routine",
     startTime: "07:00",
@@ -1201,7 +1264,15 @@ const DEFAULT_BLOCKS: Omit<ActivityBlock, "id" | "chatId" | "createdAt" | "updat
     name: "Evening",
     startTime: "17:00",
     endTime: "21:00",
-    days: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
+    days: [
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday",
+      "sunday",
+    ],
     energyProfile: "low",
     taskCategories: ["personal", "errands", "relaxation"],
     flexLevel: "soft",
@@ -1221,7 +1292,9 @@ const DEFAULT_BLOCKS: Omit<ActivityBlock, "id" | "chatId" | "createdAt" | "updat
   },
 ];
 
-export async function initializeDefaultBlocks(chatId: number): Promise<ActivityBlock[]> {
+export async function initializeDefaultBlocks(
+  chatId: number,
+): Promise<ActivityBlock[]> {
   const existingBlocks = await getAllBlocks(chatId);
   if (existingBlocks.length > 0) {
     return existingBlocks;
@@ -1263,7 +1336,9 @@ export async function createEnergyLog(
     createdAt: now,
   };
 
-  await redis.set(ENERGY_LOG_KEY(chatId, id), JSON.stringify(log), { ex: ENERGY_LOG_TTL });
+  await redis.set(ENERGY_LOG_KEY(chatId, id), JSON.stringify(log), {
+    ex: ENERGY_LOG_TTL,
+  });
   await redis.sadd(ENERGY_LOGS_SET_KEY(chatId, todayKey), id);
   await redis.expire(ENERGY_LOGS_SET_KEY(chatId, todayKey), ENERGY_LOG_TTL);
 
@@ -1279,7 +1354,9 @@ export async function getEnergyLogsForDay(
 ): Promise<EnergyLog[]> {
   const redis = getClient();
   const dateKey = date || getTodayKey();
-  const logIds = await redis.smembers<string[]>(ENERGY_LOGS_SET_KEY(chatId, dateKey));
+  const logIds = await redis.smembers<string[]>(
+    ENERGY_LOGS_SET_KEY(chatId, dateKey),
+  );
 
   if (!logIds || logIds.length === 0) return [];
 
@@ -1295,7 +1372,9 @@ export async function getEnergyLogsForDay(
   return logs.sort((a, b) => a.timestamp - b.timestamp);
 }
 
-export async function getLatestEnergyLog(chatId: number): Promise<EnergyLog | null> {
+export async function getLatestEnergyLog(
+  chatId: number,
+): Promise<EnergyLog | null> {
   const logs = await getEnergyLogsForDay(chatId);
   if (logs.length === 0) return null;
   return logs[logs.length - 1];
@@ -1359,7 +1438,15 @@ export async function updateEnergyPattern(
   );
 
   // Update day-of-week average
-  const dayNames: DayOfWeek[] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const dayNames: DayOfWeek[] = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+  ];
   const dayOfWeek = dayNames[new Date(log.timestamp).getDay()];
   pattern.dayOfWeekAverages[dayOfWeek] = exponentialMovingAverage(
     pattern.dayOfWeekAverages[dayOfWeek],
@@ -1477,11 +1564,16 @@ interface BlockScore {
 // Convert energy level string to numeric value
 function energyToNumeric(level: EnergyLevel | undefined): number {
   switch (level) {
-    case "high": return 4;
-    case "medium": return 3;
-    case "low": return 2;
-    case "variable": return 3;
-    default: return 3; // Default to medium
+    case "high":
+      return 4;
+    case "medium":
+      return 3;
+    case "low":
+      return 2;
+    case "variable":
+      return 3;
+    default:
+      return 3; // Default to medium
   }
 }
 
@@ -1495,11 +1587,12 @@ function scoreEnergyMatch(
   const blockNumeric = energyToNumeric(blockEnergy);
 
   // If block is "variable", use predicted energy instead
-  const effectiveBlockEnergy = blockEnergy === "variable" ? predictedEnergy : blockNumeric;
+  const effectiveBlockEnergy =
+    blockEnergy === "variable" ? predictedEnergy : blockNumeric;
 
   // Calculate how close the match is (0-1 scale)
   const diff = Math.abs(taskNumeric - effectiveBlockEnergy);
-  const score = Math.max(0, 1 - (diff / 3)); // 3 is max possible difference
+  const score = Math.max(0, 1 - diff / 3); // 3 is max possible difference
 
   let reason = "";
   if (score > 0.8) {
@@ -1523,25 +1616,37 @@ function scoreCategoryMatch(
   }
 
   // Normalize tags (remove @ prefix if present)
-  const normalizedTags = taskTags.map(t => t.replace(/^@/, "").toLowerCase());
-  const normalizedCategories = blockCategories.map(c => c.toLowerCase());
+  const normalizedTags = taskTags.map((t) => t.replace(/^@/, "").toLowerCase());
+  const normalizedCategories = blockCategories.map((c) => c.toLowerCase());
 
   // Count matches
-  const matches = normalizedTags.filter(tag =>
-    normalizedCategories.some(cat => cat.includes(tag) || tag.includes(cat))
+  const matches = normalizedTags.filter((tag) =>
+    normalizedCategories.some((cat) => cat.includes(tag) || tag.includes(cat)),
   );
 
   const score = matches.length / normalizedTags.length;
-  const reason = matches.length > 0
-    ? `matches: ${matches.join(", ")}`
-    : "no category overlap";
+  const reason =
+    matches.length > 0
+      ? `matches: ${matches.join(", ")}`
+      : "no category overlap";
 
   return { score, reason };
 }
 
 // Get the block's time slot for a specific date
-function getBlockTimeSlot(block: ActivityBlock, date: Date): { start: Date; end: Date } | null {
-  const dayNames: DayOfWeek[] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+function getBlockTimeSlot(
+  block: ActivityBlock,
+  date: Date,
+): { start: Date; end: Date } | null {
+  const dayNames: DayOfWeek[] = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+  ];
   const dayOfWeek = dayNames[date.getDay()];
 
   if (!block.days.includes(dayOfWeek)) {
@@ -1585,20 +1690,42 @@ export async function scoreBlockForTask(
     return { block, score: 0, reasons: ["block time has passed"] };
   }
 
-  const dayNames: DayOfWeek[] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const dayNames: DayOfWeek[] = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+  ];
   const dayOfWeek = dayNames[date.getDay()];
-  const blockMidHour = Math.floor((parseInt(block.startTime) + parseInt(block.endTime)) / 2);
+  const blockMidHour = Math.floor(
+    (parseInt(block.startTime) + parseInt(block.endTime)) / 2,
+  );
 
   // Predict energy for this block's time
-  const predictedEnergy = predictEnergy(pattern, blockMidHour, dayOfWeek, block.id);
+  const predictedEnergy = predictEnergy(
+    pattern,
+    blockMidHour,
+    dayOfWeek,
+    block.id,
+  );
 
   // 1. Energy match (30% weight)
-  const energyResult = scoreEnergyMatch(task.energyRequired, block.energyProfile, predictedEnergy);
-  totalScore += energyResult.score * 0.30;
+  const energyResult = scoreEnergyMatch(
+    task.energyRequired,
+    block.energyProfile,
+    predictedEnergy,
+  );
+  totalScore += energyResult.score * 0.3;
   if (energyResult.reason) reasons.push(energyResult.reason);
 
   // 2. Category match (25% weight)
-  const categoryResult = scoreCategoryMatch(task.contextTags, block.taskCategories);
+  const categoryResult = scoreCategoryMatch(
+    task.contextTags,
+    block.taskCategories,
+  );
   totalScore += categoryResult.score * 0.25;
   if (categoryResult.score > 0.5) reasons.push(categoryResult.reason);
 
@@ -1616,7 +1743,7 @@ export async function scoreBlockForTask(
 
   // 4. Time availability (20% weight)
   // For now, assume all blocks have time. In future, could track task assignments
-  totalScore += 0.8 * 0.20;
+  totalScore += 0.8 * 0.2;
 
   return { block, score: totalScore, reasons };
 }
@@ -1683,7 +1810,7 @@ export async function getTasksMatchingEnergy(
 
   // For now, we don't have energyRequired on tasks, so we'll infer from content
   // In future, TaskV2 would have this field
-  return tasks.filter(task => {
+  return tasks.filter((task) => {
     // Simple heuristic: longer/complex tasks = high energy, short/simple = low
     const wordCount = task.content.split(/\s+/).length;
     const hasUrgentWords = /urgent|important|deadline|asap/i.test(task.content);
@@ -1742,7 +1869,9 @@ export async function createCapturedItem(
     processedAt: extractedTasks ? now : undefined,
   };
 
-  await redis.set(CAPTURED_KEY(chatId, id), JSON.stringify(item), { ex: CAPTURED_TTL });
+  await redis.set(CAPTURED_KEY(chatId, id), JSON.stringify(item), {
+    ex: CAPTURED_TTL,
+  });
   await redis.sadd(CAPTURED_PENDING_KEY(chatId), id);
   await redis.expire(CAPTURED_PENDING_KEY(chatId), CAPTURED_TTL);
 
@@ -1761,10 +1890,14 @@ export async function getCapturedItem(
 
 export async function updateCapturedItem(item: CapturedItem): Promise<void> {
   const redis = getClient();
-  await redis.set(CAPTURED_KEY(item.chatId, item.id), JSON.stringify(item), { ex: CAPTURED_TTL });
+  await redis.set(CAPTURED_KEY(item.chatId, item.id), JSON.stringify(item), {
+    ex: CAPTURED_TTL,
+  });
 }
 
-export async function getPendingCapturedItems(chatId: number): Promise<CapturedItem[]> {
+export async function getPendingCapturedItems(
+  chatId: number,
+): Promise<CapturedItem[]> {
   const redis = getClient();
   const itemIds = await redis.smembers<string[]>(CAPTURED_PENDING_KEY(chatId));
 
@@ -1805,7 +1938,10 @@ export async function assignTaskToBlock(
 
   await redis.sadd(BLOCK_TASKS_KEY(chatId, blockId, dateKey), taskId);
   // Set TTL to end of day + 1 day buffer
-  await redis.expire(BLOCK_TASKS_KEY(chatId, blockId, dateKey), 2 * 24 * 60 * 60);
+  await redis.expire(
+    BLOCK_TASKS_KEY(chatId, blockId, dateKey),
+    2 * 24 * 60 * 60,
+  );
 }
 
 export async function getTasksForBlock(
@@ -1816,7 +1952,9 @@ export async function getTasksForBlock(
   const redis = getClient();
   const dateKey = date || getTodayKey();
 
-  const taskIds = await redis.smembers<string[]>(BLOCK_TASKS_KEY(chatId, blockId, dateKey));
+  const taskIds = await redis.smembers<string[]>(
+    BLOCK_TASKS_KEY(chatId, blockId, dateKey),
+  );
   return taskIds || [];
 }
 
@@ -1847,7 +1985,10 @@ export async function assignHabitToBlock(
 
   await redis.sadd(BLOCK_HABITS_KEY(chatId, blockId, dateKey), habitId);
   // 2-day TTL like block_tasks
-  await redis.expire(BLOCK_HABITS_KEY(chatId, blockId, dateKey), 2 * 24 * 60 * 60);
+  await redis.expire(
+    BLOCK_HABITS_KEY(chatId, blockId, dateKey),
+    2 * 24 * 60 * 60,
+  );
 }
 
 export async function getHabitsForBlock(
@@ -1858,7 +1999,9 @@ export async function getHabitsForBlock(
   const redis = getClient();
   const dateKey = date || getTodayKey();
 
-  const habitIds = await redis.smembers<string[]>(BLOCK_HABITS_KEY(chatId, blockId, dateKey));
+  const habitIds = await redis.smembers<string[]>(
+    BLOCK_HABITS_KEY(chatId, blockId, dateKey),
+  );
   return habitIds || [];
 }
 
@@ -1913,7 +2056,7 @@ export async function scheduleHabitsToBlocks(chatId: number): Promise<void> {
 
     // Verify preferred block exists and is active
     if (targetBlockId) {
-      const preferredBlock = blocks.find(b => b.id === targetBlockId);
+      const preferredBlock = blocks.find((b) => b.id === targetBlockId);
       if (!preferredBlock) {
         targetBlockId = undefined; // Block doesn't exist anymore
       }
@@ -1921,7 +2064,9 @@ export async function scheduleHabitsToBlocks(chatId: number): Promise<void> {
 
     // Auto-assign by energy if no preferred block
     if (!targetBlockId && habit.energyRequired) {
-      const match = blocks.find(b => b.energyProfile === habit.energyRequired);
+      const match = blocks.find(
+        (b) => b.energyProfile === habit.energyRequired,
+      );
       if (match) targetBlockId = match.id;
     }
 
@@ -2174,4 +2319,221 @@ export async function getWeeklyHabitStats(
   }
 
   return stats;
+}
+
+// ==========================================
+// Body Doubling Operations
+// ==========================================
+
+const BODY_DOUBLING_SESSION_TTL = 24 * 60 * 60; // 24 hours for current session
+const BODY_DOUBLING_HISTORY_TTL = 90 * 24 * 60 * 60; // 90 days for history
+
+export async function createBodyDoublingSession(
+  chatId: number,
+  focusTask: string,
+  intervalMinutes: number = 25,
+): Promise<BodyDoublingSession> {
+  const redis = getClient();
+  const id = generateId();
+  const now = Date.now();
+
+  // End any existing active session first
+  const existingSession = await getActiveBodyDoublingSession(chatId);
+  if (existingSession) {
+    await endBodyDoublingSession(chatId, "abandoned");
+  }
+
+  const session: BodyDoublingSession = {
+    id,
+    chatId,
+    focusTask,
+    intervalMinutes,
+    startedAt: now,
+    checkInCount: 0,
+    status: "active",
+    createdAt: now,
+  };
+
+  // Store as current active session
+  await redis.set(BODY_DOUBLING_CURRENT_KEY(chatId), JSON.stringify(session), {
+    ex: BODY_DOUBLING_SESSION_TTL,
+  });
+
+  return session;
+}
+
+export async function getActiveBodyDoublingSession(
+  chatId: number,
+): Promise<BodyDoublingSession | null> {
+  const redis = getClient();
+  const data = await redis.get<string>(BODY_DOUBLING_CURRENT_KEY(chatId));
+  if (!data) return null;
+
+  const session = typeof data === "string" ? JSON.parse(data) : data;
+
+  // Only return if still active
+  if (session.status !== "active") return null;
+
+  return session;
+}
+
+export async function getBodyDoublingSession(
+  chatId: number,
+  sessionId: string,
+): Promise<BodyDoublingSession | null> {
+  const redis = getClient();
+  const data = await redis.get<string>(
+    BODY_DOUBLING_SESSION_KEY(chatId, sessionId),
+  );
+  if (!data) return null;
+  return typeof data === "string" ? JSON.parse(data) : data;
+}
+
+export async function updateBodyDoublingSession(
+  session: BodyDoublingSession,
+): Promise<void> {
+  const redis = getClient();
+
+  if (session.status === "active") {
+    // Update the current session
+    await redis.set(
+      BODY_DOUBLING_CURRENT_KEY(session.chatId),
+      JSON.stringify(session),
+      { ex: BODY_DOUBLING_SESSION_TTL },
+    );
+  } else {
+    // Session ended - store in history
+    await redis.set(
+      BODY_DOUBLING_SESSION_KEY(session.chatId, session.id),
+      JSON.stringify(session),
+      { ex: BODY_DOUBLING_HISTORY_TTL },
+    );
+    await redis.sadd(
+      BODY_DOUBLING_SESSIONS_SET_KEY(session.chatId),
+      session.id,
+    );
+    await redis.expire(
+      BODY_DOUBLING_SESSIONS_SET_KEY(session.chatId),
+      BODY_DOUBLING_HISTORY_TTL,
+    );
+    // Clear current session
+    await redis.del(BODY_DOUBLING_CURRENT_KEY(session.chatId));
+  }
+}
+
+export async function updateBodyDoublingFocusTask(
+  chatId: number,
+  newFocusTask: string,
+): Promise<BodyDoublingSession | null> {
+  const session = await getActiveBodyDoublingSession(chatId);
+  if (!session) return null;
+
+  session.focusTask = newFocusTask;
+  await updateBodyDoublingSession(session);
+
+  return session;
+}
+
+export async function incrementBodyDoublingCheckIn(
+  chatId: number,
+): Promise<BodyDoublingSession | null> {
+  const session = await getActiveBodyDoublingSession(chatId);
+  if (!session) return null;
+
+  session.checkInCount += 1;
+  await updateBodyDoublingSession(session);
+
+  return session;
+}
+
+export async function endBodyDoublingSession(
+  chatId: number,
+  status: "completed" | "abandoned",
+): Promise<BodyDoublingSession | null> {
+  const session = await getActiveBodyDoublingSession(chatId);
+  if (!session) return null;
+
+  session.status = status;
+  session.endedAt = Date.now();
+  await updateBodyDoublingSession(session);
+
+  return session;
+}
+
+export async function getBodyDoublingSessions(
+  chatId: number,
+  startDate?: Date,
+  endDate?: Date,
+): Promise<BodyDoublingSession[]> {
+  const redis = getClient();
+  const sessionIds = await redis.smembers<string[]>(
+    BODY_DOUBLING_SESSIONS_SET_KEY(chatId),
+  );
+
+  if (!sessionIds || sessionIds.length === 0) return [];
+
+  const sessions: BodyDoublingSession[] = [];
+  const start = startDate?.getTime() || 0;
+  const end = endDate?.getTime() || Date.now();
+
+  for (const sessionId of sessionIds) {
+    const session = await getBodyDoublingSession(chatId, sessionId);
+    if (session && session.createdAt >= start && session.createdAt <= end) {
+      sessions.push(session);
+    }
+  }
+
+  return sessions.sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export async function getDailyBodyDoublingStats(
+  chatId: number,
+  date?: string,
+): Promise<{ sessions: number; totalMinutes: number }> {
+  const dateKey = date || getTodayKey();
+  const targetDate = new Date(dateKey);
+  const startOfDay = new Date(targetDate);
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(targetDate);
+  endOfDay.setHours(23, 59, 59, 999);
+
+  const sessions = await getBodyDoublingSessions(chatId, startOfDay, endOfDay);
+
+  let totalMinutes = 0;
+  for (const session of sessions) {
+    const endTime = session.endedAt || Date.now();
+    const durationMinutes = Math.floor((endTime - session.startedAt) / 60000);
+    totalMinutes += durationMinutes;
+  }
+
+  return {
+    sessions: sessions.length,
+    totalMinutes,
+  };
+}
+
+export async function getWeeklyBodyDoublingStats(
+  chatId: number,
+): Promise<BodyDoublingStats> {
+  const today = new Date();
+  const weekAgo = new Date(today);
+  weekAgo.setDate(today.getDate() - 7);
+
+  const sessions = await getBodyDoublingSessions(chatId, weekAgo, today);
+
+  let totalMinutes = 0;
+  for (const session of sessions) {
+    const endTime = session.endedAt || Date.now();
+    const durationMinutes = Math.floor((endTime - session.startedAt) / 60000);
+    totalMinutes += durationMinutes;
+  }
+
+  const avgSessionLength =
+    sessions.length > 0 ? Math.round(totalMinutes / sessions.length) : 0;
+
+  return {
+    sessions: sessions.length,
+    totalMinutes,
+    avgSessionLength,
+  };
 }

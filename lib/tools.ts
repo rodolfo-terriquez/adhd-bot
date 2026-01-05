@@ -5,7 +5,11 @@
 
 import type { ToolDefinition, DayOfWeek } from "./types.js";
 import * as redis from "./redis.js";
-import { scheduleReminder, cancelScheduledMessage } from "./qstash.js";
+import {
+  scheduleReminder,
+  cancelScheduledMessage,
+  scheduleBodyDoublingCheckIn,
+} from "./qstash.js";
 
 // Get user's timezone from env
 function getUserTimezone(): string {
@@ -53,7 +57,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "list_reminders",
-      description: "Get all pending reminders/tasks. Returns task ID, content, scheduled time, importance, and status.",
+      description:
+        "Get all pending reminders/tasks. Returns task ID, content, scheduled time, importance, and status.",
       parameters: {
         type: "object",
         properties: {},
@@ -65,11 +70,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "search_reminders",
-      description: "Search for reminders/tasks matching a description. Use this to find specific tasks before operating on them.",
+      description:
+        "Search for reminders/tasks matching a description. Use this to find specific tasks before operating on them.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Search term to match against task content" },
+          query: {
+            type: "string",
+            description: "Search term to match against task content",
+          },
         },
         required: ["query"],
       },
@@ -79,7 +88,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "list_lists",
-      description: "Get all the user's lists (including Inbox). Returns list names, item counts, and whether they have linked reminders.",
+      description:
+        "Get all the user's lists (including Inbox). Returns list names, item counts, and whether they have linked reminders.",
       parameters: {
         type: "object",
         properties: {},
@@ -95,7 +105,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          list_name: { type: "string", description: "Name of the list to retrieve" },
+          list_name: {
+            type: "string",
+            description: "Name of the list to retrieve",
+          },
         },
         required: ["list_name"],
       },
@@ -105,7 +118,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "get_habits",
-      description: "Get all habits, their schedules, and today's completion status.",
+      description:
+        "Get all habits, their schedules, and today's completion status.",
       parameters: {
         type: "object",
         properties: {},
@@ -117,7 +131,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "get_energy_patterns",
-      description: "Get the user's energy patterns - when they tend to have high/low energy.",
+      description:
+        "Get the user's energy patterns - when they tend to have high/low energy.",
       parameters: {
         type: "object",
         properties: {},
@@ -143,14 +158,28 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "create_reminder",
-      description: "Create a new reminder/task that will notify the user at a specified time.",
+      description:
+        "Create a new reminder/task that will notify the user at a specified time.",
       parameters: {
         type: "object",
         properties: {
-          content: { type: "string", description: "What to remind the user about" },
-          delay_minutes: { type: "number", description: "Minutes from now to send the reminder" },
-          is_important: { type: "boolean", description: "If true, will nag repeatedly until acknowledged" },
-          is_day_only: { type: "boolean", description: "If true, shows in morning review but doesn't send notification" },
+          content: {
+            type: "string",
+            description: "What to remind the user about",
+          },
+          delay_minutes: {
+            type: "number",
+            description: "Minutes from now to send the reminder",
+          },
+          is_important: {
+            type: "boolean",
+            description: "If true, will nag repeatedly until acknowledged",
+          },
+          is_day_only: {
+            type: "boolean",
+            description:
+              "If true, shows in morning review but doesn't send notification",
+          },
         },
         required: ["content", "delay_minutes"],
       },
@@ -164,7 +193,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          task_id: { type: "string", description: "ID of the task to complete" },
+          task_id: {
+            type: "string",
+            description: "ID of the task to complete",
+          },
         },
         required: ["task_id"],
       },
@@ -188,12 +220,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "add_to_inbox",
-      description: "Add an item to the user's Inbox (for things without a specific time).",
+      description:
+        "Add an item to the user's Inbox (for things without a specific time).",
       parameters: {
         type: "object",
         properties: {
           item: { type: "string", description: "Content to add to inbox" },
-          day_tag: { type: "string", description: "Optional day to associate (monday, tuesday, etc.)" },
+          day_tag: {
+            type: "string",
+            description: "Optional day to associate (monday, tuesday, etc.)",
+          },
         },
         required: ["item"],
       },
@@ -208,7 +244,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         type: "object",
         properties: {
           name: { type: "string", description: "Name of the list" },
-          items: { type: "array", items: { type: "string" }, description: "Initial items to add to the list" },
+          items: {
+            type: "array",
+            items: { type: "string" },
+            description: "Initial items to add to the list",
+          },
         },
         required: ["name"],
       },
@@ -222,7 +262,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          list_name: { type: "string", description: "Name of the list to modify" },
+          list_name: {
+            type: "string",
+            description: "Name of the list to modify",
+          },
           action: {
             type: "string",
             enum: ["add_items", "remove_items", "check_items", "uncheck_items"],
@@ -246,7 +289,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          list_name: { type: "string", description: "Name of the list to delete" },
+          list_name: {
+            type: "string",
+            description: "Name of the list to delete",
+          },
         },
         required: ["list_name"],
       },
@@ -263,9 +309,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           name: { type: "string", description: "Name of the habit" },
           days: {
             type: "string",
-            description: "Schedule: 'daily', 'weekdays', 'weekends', or comma-separated days like 'monday,wednesday,friday'",
+            description:
+              "Schedule: 'daily', 'weekdays', 'weekends', or comma-separated days like 'monday,wednesday,friday'",
           },
-          preferred_block: { type: "string", description: "Optional preferred time block (morning, afternoon, evening)" },
+          preferred_block: {
+            type: "string",
+            description:
+              "Optional preferred time block (morning, afternoon, evening)",
+          },
         },
         required: ["name", "days"],
       },
@@ -279,7 +330,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          habit_name: { type: "string", description: "Name of the habit to complete" },
+          habit_name: {
+            type: "string",
+            description: "Name of the habit to complete",
+          },
         },
         required: ["habit_name"],
       },
@@ -293,7 +347,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          habit_name: { type: "string", description: "Name of the habit to delete" },
+          habit_name: {
+            type: "string",
+            description: "Name of the habit to delete",
+          },
         },
         required: ["habit_name"],
       },
@@ -307,8 +364,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       parameters: {
         type: "object",
         properties: {
-          level: { type: "number", description: "Energy 1-5 (1=exhausted, 5=energized)" },
-          context: { type: "string", description: "Optional context about why" },
+          level: {
+            type: "number",
+            description: "Energy 1-5 (1=exhausted, 5=energized)",
+          },
+          context: {
+            type: "string",
+            description: "Optional context about why",
+          },
         },
         required: ["level"],
       },
@@ -343,20 +406,104 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
     },
   },
+
+  // BODY DOUBLING TOOLS
+  {
+    type: "function",
+    function: {
+      name: "start_body_doubling",
+      description:
+        "Start a body doubling focus session. The bot will check in periodically to help the user stay on task. Use when user says things like 'let's focus on...', 'I need to focus on...', 'body double with me', 'help me work on...'.",
+      parameters: {
+        type: "object",
+        properties: {
+          focus_task: {
+            type: "string",
+            description: "What the user wants to focus on",
+          },
+          interval_minutes: {
+            type: "number",
+            description: "How often to check in (default 25 minutes)",
+          },
+        },
+        required: ["focus_task"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_body_doubling_focus",
+      description:
+        "Change what the user is working on during an active body doubling session without ending it.",
+      parameters: {
+        type: "object",
+        properties: {
+          new_focus_task: {
+            type: "string",
+            description: "The new task to focus on",
+          },
+        },
+        required: ["new_focus_task"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "end_body_doubling",
+      description:
+        "End the current body doubling session. Use when user says they're done, finished, or want to stop.",
+      parameters: {
+        type: "object",
+        properties: {
+          completed: {
+            type: "boolean",
+            description: "Whether the user completed their focus task",
+          },
+        },
+        required: ["completed"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_body_doubling_status",
+      description:
+        "Get the current body doubling session status, including what task is being worked on and how long it's been.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
 ];
 
 // ==========================================
 // Tool Executors
 // ==========================================
 
-type ToolExecutor = (chatId: number, input: Record<string, unknown>) => Promise<string>;
+type ToolExecutor = (
+  chatId: number,
+  input: Record<string, unknown>,
+) => Promise<string>;
 
 // Helper to parse days string into DayOfWeek array
 function parseDaysString(days: string): DayOfWeek[] {
   const daysLower = days.toLowerCase().trim();
 
   if (daysLower === "daily") {
-    return ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+    return [
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday",
+      "sunday",
+    ];
   }
   if (daysLower === "weekdays") {
     return ["monday", "tuesday", "wednesday", "thursday", "friday"];
@@ -366,16 +513,30 @@ function parseDaysString(days: string): DayOfWeek[] {
   }
 
   // Parse comma-separated days
-  const validDays: DayOfWeek[] = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
-  const parsedDays = daysLower.split(",").map(d => d.trim()) as DayOfWeek[];
-  return parsedDays.filter(d => validDays.includes(d));
+  const validDays: DayOfWeek[] = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+  ];
+  const parsedDays = daysLower.split(",").map((d) => d.trim()) as DayOfWeek[];
+  return parsedDays.filter((d) => validDays.includes(d));
 }
 
 // Format days array for display
 function formatDays(days: DayOfWeek[]): string {
   if (days.length === 7) return "daily";
-  if (days.length === 5 && !days.includes("saturday") && !days.includes("sunday")) return "weekdays";
-  if (days.length === 2 && days.includes("saturday") && days.includes("sunday")) return "weekends";
+  if (
+    days.length === 5 &&
+    !days.includes("saturday") &&
+    !days.includes("sunday")
+  )
+    return "weekdays";
+  if (days.length === 2 && days.includes("saturday") && days.includes("sunday"))
+    return "weekends";
   return days.join(", ");
 }
 
@@ -387,7 +548,7 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
       return JSON.stringify({ tasks: [], message: "No pending reminders" });
     }
     return JSON.stringify({
-      tasks: tasks.map(t => ({
+      tasks: tasks.map((t) => ({
         id: t.id,
         content: t.content,
         scheduledFor: formatTimestamp(t.nextReminder),
@@ -401,17 +562,21 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
   search_reminders: async (chatId, input) => {
     const query = String(input.query || "").toLowerCase();
     const tasks = await redis.getPendingTasks(chatId);
-    const matches = tasks.filter(t =>
-      t.content.toLowerCase().includes(query) ||
-      query.includes(t.content.toLowerCase())
+    const matches = tasks.filter(
+      (t) =>
+        t.content.toLowerCase().includes(query) ||
+        query.includes(t.content.toLowerCase()),
     );
 
     if (matches.length === 0) {
-      return JSON.stringify({ tasks: [], message: `No reminders matching "${query}"` });
+      return JSON.stringify({
+        tasks: [],
+        message: `No reminders matching "${query}"`,
+      });
     }
 
     return JSON.stringify({
-      tasks: matches.map(t => ({
+      tasks: matches.map((t) => ({
         id: t.id,
         content: t.content,
         scheduledFor: formatTimestamp(t.nextReminder),
@@ -427,10 +592,10 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
       return JSON.stringify({ lists: [], message: "No lists" });
     }
     return JSON.stringify({
-      lists: lists.map(l => ({
+      lists: lists.map((l) => ({
         name: l.name,
         itemCount: l.items.length,
-        checkedCount: l.items.filter(i => i.isChecked).length,
+        checkedCount: l.items.filter((i) => i.isChecked).length,
         hasLinkedReminder: !!l.linkedTaskId,
       })),
     });
@@ -441,12 +606,15 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     const list = await redis.findListByDescription(chatId, listName);
 
     if (!list) {
-      return JSON.stringify({ error: true, message: `List "${listName}" not found` });
+      return JSON.stringify({
+        error: true,
+        message: `List "${listName}" not found`,
+      });
     }
 
     return JSON.stringify({
       name: list.name,
-      items: list.items.map(i => ({
+      items: list.items.map((i) => ({
         content: i.content,
         isChecked: i.isChecked,
       })),
@@ -459,13 +627,15 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
       return JSON.stringify({ habits: [], message: "No habits" });
     }
 
-    const habitsWithStatus = await Promise.all(habits.map(async h => ({
-      id: h.id,
-      name: h.name,
-      days: formatDays(h.days),
-      status: h.status,
-      completedToday: await redis.isHabitCompletedToday(chatId, h.id),
-    })));
+    const habitsWithStatus = await Promise.all(
+      habits.map(async (h) => ({
+        id: h.id,
+        name: h.name,
+        days: formatDays(h.days),
+        status: h.status,
+        completedToday: await redis.isHabitCompletedToday(chatId, h.id),
+      })),
+    );
 
     return JSON.stringify({ habits: habitsWithStatus });
   },
@@ -475,14 +645,17 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
 
     if (pattern.dataPoints < 3) {
       return JSON.stringify({
-        message: "Not enough data yet. Log energy throughout the day to learn patterns.",
+        message:
+          "Not enough data yet. Log energy throughout the day to learn patterns.",
         dataPoints: pattern.dataPoints,
       });
     }
 
     // Find best hours
     const hourlyEntries = Object.entries(pattern.hourlyAverages);
-    const sortedHours = hourlyEntries.sort((a, b) => Number(b[1]) - Number(a[1]));
+    const sortedHours = hourlyEntries.sort(
+      (a, b) => Number(b[1]) - Number(a[1]),
+    );
     const bestHours = sortedHours.slice(0, 3).map(([hour]) => {
       const h = parseInt(hour);
       return h < 12 ? `${h}am` : h === 12 ? "12pm" : `${h - 12}pm`;
@@ -514,11 +687,22 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     const isImportant = Boolean(input.is_important);
     const isDayOnly = Boolean(input.is_day_only);
 
-    const task = await redis.createTask(chatId, content, isImportant, delayMinutes, isDayOnly);
+    const task = await redis.createTask(
+      chatId,
+      content,
+      isImportant,
+      delayMinutes,
+      isDayOnly,
+    );
 
     // Schedule QStash notification if not day-only
     if (!isDayOnly) {
-      const messageId = await scheduleReminder(chatId, task.id, delayMinutes, false);
+      const messageId = await scheduleReminder(
+        chatId,
+        task.id,
+        delayMinutes,
+        false,
+      );
       task.qstashMessageId = messageId;
       await redis.updateTask(task);
     }
@@ -608,14 +792,22 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
 
     const list = await redis.findListByDescription(chatId, listName);
     if (!list) {
-      return JSON.stringify({ error: true, message: `List "${listName}" not found` });
+      return JSON.stringify({
+        error: true,
+        message: `List "${listName}" not found`,
+      });
     }
 
     let result;
     switch (action) {
       case "add_items":
         result = await redis.addListItems(chatId, list.id, items);
-        return JSON.stringify({ success: true, listName: list.name, action: "added", items });
+        return JSON.stringify({
+          success: true,
+          listName: list.name,
+          action: "added",
+          items,
+        });
 
       case "remove_items":
         result = await redis.removeListItems(chatId, list.id, items);
@@ -645,7 +837,10 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
         });
 
       default:
-        return JSON.stringify({ error: true, message: `Unknown action: ${action}` });
+        return JSON.stringify({
+          error: true,
+          message: `Unknown action: ${action}`,
+        });
     }
   },
 
@@ -654,7 +849,10 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     const list = await redis.findListByDescription(chatId, listName);
 
     if (!list) {
-      return JSON.stringify({ error: true, message: `List "${listName}" not found` });
+      return JSON.stringify({
+        error: true,
+        message: `List "${listName}" not found`,
+      });
     }
 
     await redis.deleteList(chatId, list.id);
@@ -677,7 +875,10 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     // Find preferred block if specified
     let preferredBlockId: string | undefined;
     if (input.preferred_block) {
-      const block = await redis.findBlockByName(chatId, String(input.preferred_block));
+      const block = await redis.findBlockByName(
+        chatId,
+        String(input.preferred_block),
+      );
       if (block) {
         preferredBlockId = block.id;
       }
@@ -698,7 +899,10 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     const habit = await redis.findHabitByName(chatId, habitName);
 
     if (!habit) {
-      return JSON.stringify({ error: true, message: `Habit "${habitName}" not found` });
+      return JSON.stringify({
+        error: true,
+        message: `Habit "${habitName}" not found`,
+      });
     }
 
     // Check if already completed today
@@ -712,7 +916,10 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     await redis.completeHabit(chatId, habit.id);
 
     // Get weekly count
-    const completions = await redis.getHabitCompletionsForWeek(chatId, habit.id);
+    const completions = await redis.getHabitCompletionsForWeek(
+      chatId,
+      habit.id,
+    );
 
     return JSON.stringify({
       success: true,
@@ -726,7 +933,10 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     const habit = await redis.findHabitByName(chatId, habitName);
 
     if (!habit) {
-      return JSON.stringify({ error: true, message: `Habit "${habitName}" not found` });
+      return JSON.stringify({
+        error: true,
+        message: `Habit "${habitName}" not found`,
+      });
     }
 
     await redis.deleteHabit(chatId, habit.id);
@@ -738,7 +948,12 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
   },
 
   log_energy: async (chatId, input) => {
-    const level = Math.min(5, Math.max(1, Number(input.level))) as 1 | 2 | 3 | 4 | 5;
+    const level = Math.min(5, Math.max(1, Number(input.level))) as
+      | 1
+      | 2
+      | 3
+      | 4
+      | 5;
     const context = input.context ? String(input.context) : undefined;
 
     // Get current block if any
@@ -746,7 +961,13 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
 
     await redis.createEnergyLog(chatId, level, context, currentBlock?.id);
 
-    const energyDescriptions = ["exhausted", "low", "okay", "good", "energized"];
+    const energyDescriptions = [
+      "exhausted",
+      "low",
+      "okay",
+      "good",
+      "energized",
+    ];
 
     return JSON.stringify({
       success: true,
@@ -782,6 +1003,135 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
       hasNotes: !!notes,
     });
   },
+
+  // BODY DOUBLING TOOLS
+  start_body_doubling: async (chatId, input) => {
+    const focusTask = String(input.focus_task);
+    const intervalMinutes = input.interval_minutes
+      ? Number(input.interval_minutes)
+      : 25;
+
+    // Create the session (this also ends any existing active session)
+    const session = await redis.createBodyDoublingSession(
+      chatId,
+      focusTask,
+      intervalMinutes,
+    );
+
+    // Schedule the first check-in
+    const messageId = await scheduleBodyDoublingCheckIn(
+      chatId,
+      session.id,
+      intervalMinutes,
+    );
+
+    // Update session with the QStash message ID
+    session.qstashMessageId = messageId;
+    await redis.updateBodyDoublingSession(session);
+
+    return JSON.stringify({
+      success: true,
+      sessionId: session.id,
+      focusTask: session.focusTask,
+      intervalMinutes: session.intervalMinutes,
+      message: `Body doubling session started. I'll check in with you in ${intervalMinutes} minutes.`,
+    });
+  },
+
+  update_body_doubling_focus: async (chatId, input) => {
+    const newFocusTask = String(input.new_focus_task);
+
+    const session = await redis.updateBodyDoublingFocusTask(
+      chatId,
+      newFocusTask,
+    );
+
+    if (!session) {
+      return JSON.stringify({
+        error: true,
+        message: "No active body doubling session to update",
+      });
+    }
+
+    return JSON.stringify({
+      success: true,
+      sessionId: session.id,
+      previousFocusTask: session.focusTask,
+      newFocusTask,
+      message: `Focus updated to: ${newFocusTask}`,
+    });
+  },
+
+  end_body_doubling: async (chatId, input) => {
+    const completed = Boolean(input.completed);
+
+    const session = await redis.getActiveBodyDoublingSession(chatId);
+
+    if (!session) {
+      return JSON.stringify({
+        error: true,
+        message: "No active body doubling session to end",
+      });
+    }
+
+    // Cancel the scheduled check-in if exists
+    if (session.qstashMessageId) {
+      try {
+        await cancelScheduledMessage(session.qstashMessageId);
+      } catch {
+        // Ignore if already processed
+      }
+    }
+
+    // Calculate duration
+    const durationMinutes = Math.floor(
+      (Date.now() - session.startedAt) / 60000,
+    );
+
+    // End the session
+    await redis.endBodyDoublingSession(
+      chatId,
+      completed ? "completed" : "abandoned",
+    );
+
+    return JSON.stringify({
+      success: true,
+      sessionId: session.id,
+      focusTask: session.focusTask,
+      completed,
+      durationMinutes,
+      checkInCount: session.checkInCount,
+      message: completed
+        ? `Great job! You focused on "${session.focusTask}" for ${durationMinutes} minutes.`
+        : `Session ended. You worked on "${session.focusTask}" for ${durationMinutes} minutes.`,
+    });
+  },
+
+  get_body_doubling_status: async (chatId) => {
+    const session = await redis.getActiveBodyDoublingSession(chatId);
+
+    if (!session) {
+      return JSON.stringify({
+        active: false,
+        message: "No active body doubling session",
+      });
+    }
+
+    const elapsedMinutes = Math.floor((Date.now() - session.startedAt) / 60000);
+    const nextCheckInMinutes =
+      session.intervalMinutes - (elapsedMinutes % session.intervalMinutes);
+
+    return JSON.stringify({
+      active: true,
+      sessionId: session.id,
+      focusTask: session.focusTask,
+      elapsedMinutes,
+      checkInCount: session.checkInCount,
+      intervalMinutes: session.intervalMinutes,
+      nextCheckInMinutes,
+      startedAt: formatTimestamp(session.startedAt),
+    });
+  },
 };
 
 // Execute a tool by name
@@ -794,7 +1144,10 @@ export async function executeTool(
 
   if (!executor) {
     return {
-      result: JSON.stringify({ error: true, message: `Unknown tool: ${toolName}` }),
+      result: JSON.stringify({
+        error: true,
+        message: `Unknown tool: ${toolName}`,
+      }),
       isError: true,
     };
   }

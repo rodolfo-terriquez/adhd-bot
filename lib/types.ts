@@ -267,6 +267,7 @@ export interface NotificationPayload {
   chatId: number;
   taskId: string;
   blockId?: string; // For block-related notifications
+  sessionId?: string; // For body doubling check-ins
   type:
     | "reminder"
     | "nag"
@@ -278,7 +279,9 @@ export interface NotificationPayload {
     // V2 block notifications
     | "block_start"
     | "block_end"
-    | "energy_check";
+    | "energy_check"
+    // Body doubling
+    | "body_doubling_checkin";
 }
 
 // Daily check-in data
@@ -392,6 +395,27 @@ export interface HabitCompletion {
   chatId: number;
   date: string; // "YYYY-MM-DD"
   completedAt: number; // Timestamp
+}
+
+// Body doubling session for focus accountability
+export interface BodyDoublingSession {
+  id: string;
+  chatId: number;
+  focusTask: string;
+  intervalMinutes: number; // default 25
+  startedAt: number;
+  checkInCount: number; // how many check-ins have occurred
+  qstashMessageId?: string; // for the next scheduled check-in
+  status: "active" | "completed" | "abandoned";
+  endedAt?: number;
+  createdAt: number;
+}
+
+// Body doubling weekly stats for weekly review
+export interface BodyDoublingStats {
+  sessions: number;
+  totalMinutes: number;
+  avgSessionLength: number;
 }
 
 // Raw unprocessed input before task extraction
@@ -609,12 +633,15 @@ export interface ToolDefinition {
     description: string;
     parameters: {
       type: "object";
-      properties: Record<string, {
-        type: string;
-        description: string;
-        enum?: string[];
-        items?: { type: string };
-      }>;
+      properties: Record<
+        string,
+        {
+          type: string;
+          description: string;
+          enum?: string[];
+          items?: { type: string };
+        }
+      >;
       required: string[];
     };
   };

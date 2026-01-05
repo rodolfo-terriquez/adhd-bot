@@ -18,7 +18,9 @@ import type { ConversationMessage } from "./redis.js";
 // Use project ID if provided, otherwise fall back to project name
 const logger = initLogger({
   projectId: process.env.BRAINTRUST_PROJECT_ID,
-  projectName: process.env.BRAINTRUST_PROJECT_ID ? undefined : (process.env.BRAINTRUST_PROJECT_NAME || "Tama ADHD Bot"),
+  projectName: process.env.BRAINTRUST_PROJECT_ID
+    ? undefined
+    : process.env.BRAINTRUST_PROJECT_NAME || "Tama ADHD Bot",
   apiKey: process.env.BRAINTRUST_API_KEY,
 });
 
@@ -109,7 +111,7 @@ export async function callLLMWithTools(
   const message = choice?.message;
 
   // Extract tool calls if present
-  const toolCalls: ToolCall[] = (message?.tool_calls || []).map(tc => ({
+  const toolCalls: ToolCall[] = (message?.tool_calls || []).map((tc) => ({
     id: tc.id,
     type: "function" as const,
     function: {
@@ -142,6 +144,19 @@ function formatTimestamp(timestamp: number): string {
     hour12: true,
     timeZone: getUserTimezone(),
   });
+}
+
+// Helper to format minutes to hours and minutes
+function formatMinutesToHoursAndMinutes(totalMinutes: number): string {
+  if (totalMinutes < 60) {
+    return `${totalMinutes} min`;
+  }
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (minutes === 0) {
+    return `${hours} hr${hours > 1 ? "s" : ""}`;
+  }
+  return `${hours} hr${hours > 1 ? "s" : ""} ${minutes} min`;
 }
 
 // Helper to get current time context for system prompt
@@ -725,8 +740,8 @@ export interface MorningReviewData {
   energyInsights?: {
     predictedMorningEnergy: "high" | "medium" | "low";
     predictedAfternoonEnergy: "high" | "medium" | "low";
-    bestTimeForHardTasks?: string;  // e.g., "Focus Time (9am-12pm)"
-    dataPoints: number;  // How much data we have to base predictions on
+    bestTimeForHardTasks?: string; // e.g., "Focus Time (9am-12pm)"
+    dataPoints: number; // How much data we have to base predictions on
   };
   // Habits for today
   habits?: {
@@ -752,8 +767,11 @@ export async function generateMorningReviewMessage(
 
   // Habits come first - these are daily routines
   if (hasHabits) {
-    const habitList = data.habits!
-      .map((h) => `- ${h.completed ? "[✓]" : "[ ]"} ${h.name}${h.block ? ` (${h.block})` : ""}`)
+    const habitList = data
+      .habits!.map(
+        (h) =>
+          `- ${h.completed ? "[✓]" : "[ ]"} ${h.name}${h.block ? ` (${h.block})` : ""}`,
+      )
       .join("\n");
     dataSection += `Today's habits (${data.habits!.length}):\n${habitList}\n\n`;
   }
@@ -845,12 +863,19 @@ export interface WeeklyHabitStats {
   scheduled: number;
 }
 
+export interface BodyDoublingWeeklyStats {
+  sessions: number;
+  totalMinutes: number;
+  avgSessionLength: number;
+}
+
 export async function generateWeeklyInsights(
   checkIns: CheckIn[],
   dumps: BrainDump[],
   completedTaskCount: number,
   context?: ConversationContext,
   habitStats?: WeeklyHabitStats[],
+  bodyDoublingStats?: BodyDoublingWeeklyStats,
 ): Promise<string> {
   const client = getClient();
 
@@ -887,9 +912,15 @@ export async function generateWeeklyInsights(
         .join("\n")
     : "";
 
+  // Format body doubling stats
+  const hasBodyDoubling = bodyDoublingStats && bodyDoublingStats.sessions > 0;
+  const bodyDoublingText = hasBodyDoubling
+    ? `- ${bodyDoublingStats.sessions} focus session${bodyDoublingStats.sessions > 1 ? "s" : ""} (${formatMinutesToHoursAndMinutes(bodyDoublingStats.totalMinutes)} total, avg ${bodyDoublingStats.avgSessionLength} min each)`
+    : "";
+
   const systemPrompt = `${MIKA_PERSONALITY}
 
-Create a gentle weekly reflection. Notice patterns (which days felt better/harder, any themes) without judgment. If you offer suggestions, frame them as options, not directives - "maybe," "you could try," "if it helps." Never imply the user should have done more. Treat all outcomes as neutral data. Keep it warm and concise.${hasHabits ? " Include a note about habit consistency, celebrating wins without judgment about misses." : ""}`;
+Create a gentle weekly reflection. Notice patterns (which days felt better/harder, any themes) without judgment. If you offer suggestions, frame them as options, not directives - "maybe," "you could try," "if it helps." Never imply the user should have done more. Treat all outcomes as neutral data. Keep it warm and concise.${hasHabits ? " Include a note about habit consistency, celebrating wins without judgment about misses." : ""}${hasBodyDoubling ? " Acknowledge their body doubling focus sessions - this is them actively working on staying focused." : ""}`;
 
   const taskPrompt = `Here's my week:
 
@@ -902,6 +933,7 @@ Brain dumps captured: ${dumps.length}
 
 ${dumps.length > 0 ? `Brain dump topics:\n${dumpsText}\n` : ""}
 ${hasHabits ? `Habits:\n${habitsText}\n` : ""}
+${hasBodyDoubling ? `Body Doubling:\n${bodyDoublingText}\n` : ""}
 Please share any patterns you notice, gently.`;
 
   const response = await client.chat.completions.create({
@@ -937,13 +969,21 @@ export async function generateBlockStartMessage(
 ): Promise<string> {
   const client = getClient();
 
-  const taskList = data.tasks.length > 0
-    ? data.tasks.map((t) => `- ${t.content}${t.energy ? ` (${t.energy} energy)` : ""}`).join("\n")
-    : "No tasks slotted yet";
+  const taskList =
+    data.tasks.length > 0
+      ? data.tasks
+          .map(
+            (t) => `- ${t.content}${t.energy ? ` (${t.energy} energy)` : ""}`,
+          )
+          .join("\n")
+      : "No tasks slotted yet";
 
-  const habitList = data.habits && data.habits.length > 0
-    ? data.habits.map((h) => `- ${h.completed ? "[✓]" : "[ ]"} ${h.name}`).join("\n")
-    : "";
+  const habitList =
+    data.habits && data.habits.length > 0
+      ? data.habits
+          .map((h) => `- ${h.completed ? "[✓]" : "[ ]"} ${h.name}`)
+          .join("\n")
+      : "";
 
   const systemPrompt = `${MIKA_PERSONALITY}
 
@@ -992,21 +1032,25 @@ export async function generateBlockEndMessage(
 
 A time block is ending. Briefly acknowledge any wins (including completed habits). If there are remaining tasks or habits, mention they'll carry forward - no judgment. If there's a next block, mention it casually.`;
 
-  const completedText = data.completedTasks.length > 0
-    ? `Completed tasks: ${data.completedTasks.join(", ")}`
-    : "No tasks checked off, and that's okay";
+  const completedText =
+    data.completedTasks.length > 0
+      ? `Completed tasks: ${data.completedTasks.join(", ")}`
+      : "No tasks checked off, and that's okay";
 
-  const remainingText = data.remainingTasks.length > 0
-    ? `Still pending: ${data.remainingTasks.join(", ")}`
-    : "";
+  const remainingText =
+    data.remainingTasks.length > 0
+      ? `Still pending: ${data.remainingTasks.join(", ")}`
+      : "";
 
-  const completedHabitsText = data.completedHabits && data.completedHabits.length > 0
-    ? `Habits done: ${data.completedHabits.join(", ")}`
-    : "";
+  const completedHabitsText =
+    data.completedHabits && data.completedHabits.length > 0
+      ? `Habits done: ${data.completedHabits.join(", ")}`
+      : "";
 
-  const incompleteHabitsText = data.incompleteHabits && data.incompleteHabits.length > 0
-    ? `Habits still open: ${data.incompleteHabits.join(", ")}`
-    : "";
+  const incompleteHabitsText =
+    data.incompleteHabits && data.incompleteHabits.length > 0
+      ? `Habits still open: ${data.incompleteHabits.join(", ")}`
+      : "";
 
   const nextBlockText = data.nextBlockName
     ? `Next up: ${data.nextBlockName}`
@@ -1032,8 +1076,14 @@ Give a brief transition message.`;
   const content = response.choices[0]?.message?.content;
   if (!content) {
     let message = `${data.blockName} wrapping up 🐾`;
-    if (data.completedTasks.length > 0 || (data.completedHabits && data.completedHabits.length > 0)) {
-      const allCompleted = [...data.completedTasks, ...(data.completedHabits || [])];
+    if (
+      data.completedTasks.length > 0 ||
+      (data.completedHabits && data.completedHabits.length > 0)
+    ) {
+      const allCompleted = [
+        ...data.completedTasks,
+        ...(data.completedHabits || []),
+      ];
       message += `\n\nNice work on: ${allCompleted.join(", ")}`;
     }
     if (data.nextBlockName) {
@@ -1071,6 +1121,64 @@ Ask for a quick energy check (1-5 scale). Keep it very brief and casual. If they
     return currentBlockName
       ? `Quick check - how's your energy? (1-5) 🐾`
       : `Energy check? (1-5) 🐾`;
+  }
+
+  return content;
+}
+
+// ==========================================
+// Body Doubling Check-in Messages
+// ==========================================
+
+export async function generateBodyDoublingCheckInMessage(
+  focusTask: string,
+  checkInCount: number,
+  elapsedMinutes: number,
+  context?: ConversationContext,
+): Promise<string> {
+  const client = getClient();
+
+  const timeDescription =
+    elapsedMinutes < 60
+      ? `${elapsedMinutes} minutes`
+      : `${Math.floor(elapsedMinutes / 60)} hour${Math.floor(elapsedMinutes / 60) > 1 ? "s" : ""}${elapsedMinutes % 60 > 0 ? ` and ${elapsedMinutes % 60} minutes` : ""}`;
+
+  const checkInStyles: Record<number, string> = {
+    1: "This is the first check-in. Be warm and curious about how it's going. Maybe a light 'still here with you' vibe.",
+    2: "Second check-in. Acknowledge they've been at it for a while. Gentle encouragement.",
+    3: "Third check-in. They're really in it now. Brief acknowledgment, maybe a tiny celebration of persistence.",
+    4: "Fourth check-in or later. Keep it light and brief. They know you're here.",
+  };
+
+  const style = checkInStyles[Math.min(checkInCount, 4)];
+
+  const systemPrompt = `${MIKA_PERSONALITY}
+
+You're body doubling with the user - they're working on something and you're checking in periodically to help them stay focused. This is check-in #${checkInCount}.
+
+${style}
+
+Keep it to 1-2 sentences. Ask how it's going or offer gentle encouragement. Remind them they can say "I'm done" when finished, or let you know if they want to switch to something else. Don't be pushy - you're just here, keeping them company.`;
+
+  const taskPrompt = `Body doubling check-in. They've been working on "${focusTask}" for ${timeDescription}. This is check-in #${checkInCount}.`;
+
+  const response = await client.chat.completions.create({
+    model: getChatModel(),
+    max_tokens: 200,
+    messages: buildContextMessages(systemPrompt, taskPrompt, context),
+    ...getChatParams(),
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) {
+    // Fallback messages based on check-in count
+    const fallbacks = [
+      `Hey, still here with you. How's "${focusTask}" going? 🐾`,
+      `${timeDescription} in. How's it going?`,
+      `Check in - still working on "${focusTask}"?`,
+      `Still here 🐾 How's it going?`,
+    ];
+    return fallbacks[Math.min(checkInCount - 1, fallbacks.length - 1)];
   }
 
   return content;
@@ -1239,7 +1347,12 @@ export type ActionContext =
       hasNoTasks: boolean;
     }
   // Habit action contexts
-  | { type: "habit_created"; name: string; days: string; preferredBlock?: string }
+  | {
+      type: "habit_created";
+      name: string;
+      days: string;
+      preferredBlock?: string;
+    }
   | {
       type: "habits_list";
       habits: Array<{
@@ -1258,7 +1371,11 @@ export type ActionContext =
   | { type: "habit_completed"; name: string; weeklyCount: number }
   | { type: "habit_already_completed"; name: string }
   | { type: "habit_moved_to_block"; habitName: string; blockName: string }
-  | { type: "habit_preferred_block_set"; habitName: string; blockName: string | null }
+  | {
+      type: "habit_preferred_block_set";
+      habitName: string;
+      blockName: string | null;
+    }
   | { type: "habit_block_not_found"; blockName: string };
 
 export async function generateActionResponse(
@@ -1300,7 +1417,9 @@ export async function generateActionResponse(
       prompt = `The user just cancelled the task "${actionContext.task}". Acknowledge neutrally.`;
       break;
     case "multiple_tasks_cancelled": {
-      const cancelledTaskList = actionContext.tasks.map((t) => `- "${t}"`).join("\n");
+      const cancelledTaskList = actionContext.tasks
+        .map((t) => `- "${t}"`)
+        .join("\n");
       prompt = `The user just cancelled ${actionContext.tasks.length} tasks:\n${cancelledTaskList}\nAcknowledge neutrally - it's okay to change priorities.`;
       break;
     }
@@ -1414,14 +1533,26 @@ export async function generateActionResponse(
       break;
     // V2 cases
     case "energy_logged":
-      const energyDescriptions = ["exhausted", "low", "okay", "good", "energized"];
+      const energyDescriptions = [
+        "exhausted",
+        "low",
+        "okay",
+        "good",
+        "energized",
+      ];
       prompt = `The user logged their energy as ${actionContext.level}/5 (${energyDescriptions[actionContext.level - 1]})${actionContext.context ? ` with context: "${actionContext.context}"` : ""}. Acknowledge briefly and maybe offer a relevant suggestion based on their energy level.`;
       break;
     case "energy_observation_noted": {
       // This is a conversational energy observation - respond naturally while subtly acknowledging we noted it
-      const timeDesc = actionContext.timeOfDay ? `in the ${actionContext.timeOfDay}` : "";
-      const dayDesc = actionContext.dayOfWeek ? `on ${actionContext.dayOfWeek}s` : "";
-      const patternType = actionContext.isPattern ? "general pattern" : "current observation";
+      const timeDesc = actionContext.timeOfDay
+        ? `in the ${actionContext.timeOfDay}`
+        : "";
+      const dayDesc = actionContext.dayOfWeek
+        ? `on ${actionContext.dayOfWeek}s`
+        : "";
+      const patternType = actionContext.isPattern
+        ? "general pattern"
+        : "current observation";
       prompt = `The user casually mentioned: "${actionContext.originalMessage}"
 
 This is an energy ${patternType} - they tend to have ${actionContext.energyLevel} energy ${timeDesc} ${dayDesc}.
@@ -1446,14 +1577,18 @@ Just engage naturally with what they shared, maybe with a brief acknowledgment t
       break;
     case "blocks_shown":
       const blockList = actionContext.blocks
-        .map((b) => `- ${b.name}: ${b.timeRange} (${b.days}) - ${b.energyProfile} energy`)
+        .map(
+          (b) =>
+            `- ${b.name}: ${b.timeRange} (${b.days}) - ${b.energyProfile} energy`,
+        )
         .join("\n");
       prompt = `The user's activity blocks:\n${blockList}\n\nShow these in a friendly, readable format.`;
       break;
     case "block_shown": {
-      const blockTaskList = actionContext.tasks.length > 0
-        ? `Tasks: ${actionContext.tasks.join(", ")}`
-        : "No tasks assigned yet";
+      const blockTaskList =
+        actionContext.tasks.length > 0
+          ? `Tasks: ${actionContext.tasks.join(", ")}`
+          : "No tasks assigned yet";
       prompt = `Showing the "${actionContext.name}" block (${actionContext.timeRange}, ${actionContext.energyProfile} energy). ${blockTaskList}. Present this clearly.`;
       break;
     }
@@ -1502,7 +1637,9 @@ Just engage naturally with what they shared, maybe with a brief acknowledgment t
       } else if (actionContext.matchingTasks.length === 0) {
         prompt = `The user's energy is ${actionContext.currentEnergy} but none of their pending tasks seem like a great match for that energy level right now. Acknowledge this and maybe suggest they could use this time for something else or pick something anyway.`;
       } else {
-        const taskList = actionContext.matchingTasks.map((t) => `- ${t}`).join("\n");
+        const taskList = actionContext.matchingTasks
+          .map((t) => `- ${t}`)
+          .join("\n");
         prompt = `The user's energy is ${actionContext.currentEnergy}. These tasks seem like a good match:\n${taskList}\n\nPresent these as options, not demands. Be casual about it.`;
       }
       break;
@@ -1542,9 +1679,10 @@ Just engage naturally with what they shared, maybe with a brief acknowledgment t
       prompt = `The user resumed the "${actionContext.name}" habit. Acknowledge warmly - it's back in their daily flow.`;
       break;
     case "habit_completed": {
-      const streakText = actionContext.weeklyCount > 1
-        ? ` That's ${actionContext.weeklyCount} times this week.`
-        : "";
+      const streakText =
+        actionContext.weeklyCount > 1
+          ? ` That's ${actionContext.weeklyCount} times this week.`
+          : "";
       prompt = `The user completed their "${actionContext.name}" habit for today.${streakText} Give a small, proportional celebration.`;
       break;
     }
@@ -1697,7 +1835,8 @@ Generate a response to acknowledge an action. Be warm but brief. For task lists,
       }
       case "energy_match_results":
         if (actionContext.hasNoTasks) return `No pending tasks right now.`;
-        if (actionContext.matchingTasks.length === 0) return `Nothing seems like a perfect match for ${actionContext.currentEnergy} energy right now.`;
+        if (actionContext.matchingTasks.length === 0)
+          return `Nothing seems like a perfect match for ${actionContext.currentEnergy} energy right now.`;
         return `For ${actionContext.currentEnergy} energy:\n${actionContext.matchingTasks.map((t) => `- ${t}`).join("\n")}`;
       case "extraction_cancelled":
         return `No worries, dropped those.`;
@@ -1896,21 +2035,28 @@ export async function extractTasksFromText(
     const parsed = JSON.parse(extractedContent);
 
     // Handle both array and object with tasks property
-    const tasksArray = Array.isArray(parsed) ? parsed : (parsed.tasks || []);
+    const tasksArray = Array.isArray(parsed) ? parsed : parsed.tasks || [];
 
     // Validate and normalize the extracted tasks
     const tasks: ExtractedTask[] = tasksArray
-      .filter((t: unknown): t is Record<string, unknown> =>
-        typeof t === "object" && t !== null && typeof (t as Record<string, unknown>).content === "string"
+      .filter(
+        (t: unknown): t is Record<string, unknown> =>
+          typeof t === "object" &&
+          t !== null &&
+          typeof (t as Record<string, unknown>).content === "string",
       )
       .map((t: Record<string, unknown>) => ({
         content: String(t.content),
         suggestedEnergyLevel: validateEnergyLevel(t.suggestedEnergyLevel),
         suggestedContextTags: Array.isArray(t.suggestedContextTags)
-          ? t.suggestedContextTags.filter((tag): tag is string => typeof tag === "string")
+          ? t.suggestedContextTags.filter(
+              (tag): tag is string => typeof tag === "string",
+            )
           : undefined,
         suggestedDecomposition: Array.isArray(t.suggestedDecomposition)
-          ? t.suggestedDecomposition.filter((s): s is string => typeof s === "string")
+          ? t.suggestedDecomposition.filter(
+              (s): s is string => typeof s === "string",
+            )
           : undefined,
         confidence: typeof t.confidence === "number" ? t.confidence : 0.5,
       }));
@@ -1938,7 +2084,11 @@ export async function generateExtractionResponse(
 
   if (tasks.length === 0) {
     return await generateActionResponse(
-      { type: "conversation", message: "I couldn't find any clear tasks in there. Want to tell me more specifically what you need to do?" },
+      {
+        type: "conversation",
+        message:
+          "I couldn't find any clear tasks in there. Want to tell me more specifically what you need to do?",
+      },
       context,
     );
   }

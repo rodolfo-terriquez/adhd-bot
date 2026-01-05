@@ -199,6 +199,36 @@ export async function scheduleFollowUp(
   return result.messageId;
 }
 
+export async function scheduleBodyDoublingCheckIn(
+  chatId: number,
+  sessionId: string,
+  delayMinutes: number,
+): Promise<string> {
+  const client = getClient();
+  const notifyUrl = getNotifyUrl();
+
+  console.log(
+    `QStash: Scheduling body doubling check-in to ${notifyUrl} with delay ${delayMinutes * 60}s`,
+  );
+
+  const payload: NotificationPayload = {
+    chatId,
+    taskId: "",
+    sessionId,
+    type: "body_doubling_checkin",
+  };
+
+  const result = await client.publishJSON({
+    url: notifyUrl,
+    body: payload,
+    delay: delayMinutes * 60, // Convert to seconds
+    retries: 3,
+  });
+
+  console.log(`QStash: Body doubling check-in message ID ${result.messageId}`);
+  return result.messageId;
+}
+
 export async function deleteSchedule(scheduleId: string): Promise<void> {
   const client = getClient();
   try {
