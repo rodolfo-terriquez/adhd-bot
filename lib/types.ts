@@ -348,6 +348,7 @@ export interface ActivityBlock {
   flexLevel: "fixed" | "flexible" | "soft"; // How strictly to enforce timing
   isDefault: boolean; // System-provided vs user-created
   status: "active" | "paused";
+  qstashScheduleId?: string; // QStash schedule ID for block start notifications
   createdAt: number;
   updatedAt: number;
 }

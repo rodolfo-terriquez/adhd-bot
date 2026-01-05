@@ -82,7 +82,7 @@ External Services:
 **Trigger:** POST from Telegram when user sends message
 **Flow:**
 1. Validates user authorization (if ALLOWED_USERS is set)
-2. Registers new users and sets up default schedules
+2. Registers new users and sets up default schedules + activity blocks
 3. Handles voice messages:
    - Downloads audio file from Telegram
    - Transcribes using OpenAI Whisper
@@ -243,7 +243,7 @@ Defines all TypeScript interfaces and types:
 - Max 3 consecutive tool errors → graceful exit
 
 #### `tools.ts` (NEW - Tool Definitions & Executors)
-**Purpose:** Defines 22 tools available to the agent
+**Purpose:** Defines 27 tools available to the agent
 **Tool Categories:**
 
 **Read Tools (context gathering):**
@@ -254,6 +254,8 @@ Defines all TypeScript interfaces and types:
 - `get_habits` - Get habits with today's status
 - `get_energy_patterns` - Get learned energy patterns
 - `get_current_time` - Get time in user's timezone
+- `get_blocks` - Get all activity blocks with tasks/habits assigned (auto-initializes defaults if none exist)
+- `get_body_doubling_status` - Get current body doubling session status
 
 **Write Tools (state changes):**
 - `create_reminder` - Create task + schedule QStash
@@ -269,6 +271,9 @@ Defines all TypeScript interfaces and types:
 - `log_energy` - Log energy level
 - `save_brain_dump` - Save a note
 - `save_checkin` - Save daily check-in
+- `start_body_doubling` - Start a focus session with periodic check-ins
+- `update_body_doubling_focus` - Change focus task during active session
+- `end_body_doubling` - End the current body doubling session
 
 Each tool has:
 - OpenAI function definition (name, description, parameters)
@@ -713,6 +718,22 @@ Reminders can have linked lists:
 → When reminder is marked done, list is auto-completed
 ```
 
+### 7. Body Doubling
+Virtual co-working feature for focus sessions:
+- User says "body double with me on [task]" or "help me focus on [task]"
+- Bot starts a session with configurable check-in interval (default 25 min)
+- Periodic check-ins use LLM to generate natural, varied messages
+- User can update focus task mid-session or end with "I'm done"
+- Session stats tracked (duration, check-ins) and included in weekly summary
+
+### 8. Activity Blocks
+Time-based day organization:
+- 6 default blocks: Morning Routine, Focus Time, Midday Break, Afternoon Push, Wind Down, Evening
+- Each block has: time range, active days, energy profile (low/medium/high), task categories
+- Tasks and habits can be assigned to blocks
+- `get_blocks` tool auto-initializes defaults if none exist
+- Block start/end notifications available via QStash
+
 ---
 
 ## Error Handling
@@ -795,7 +816,7 @@ For local testing with Telegram:
    - Replaced single-shot intent parsing with iterative tool-calling loop
    - LLM can now execute multiple tools to handle complex requests
    - Better handling of vague requests (searches first, then acts)
-   - 22 tools defined for all bot operations
+   - 27 tools defined for all bot operations
    - Handles multi-step operations (e.g., "reschedule X to Y")
    - Safeguards: max 10 iterations, 25s timeout, consecutive error limit
 
@@ -809,6 +830,21 @@ For local testing with Telegram:
    - Added stripSchedulingMetadata() to normalize task descriptions
    - Removes "@day time", "(overdue)", "(important)" from comparisons
    - Better matching of user references to stored tasks
+
+4. **Body Doubling Feature:**
+   - Virtual co-working sessions where bot checks in periodically
+   - Tools: `start_body_doubling`, `update_body_doubling_focus`, `end_body_doubling`, `get_body_doubling_status`
+   - Configurable check-in interval (default 25 minutes)
+   - LLM generates natural, varied check-in messages (not formulaic)
+   - Tracks session duration and check-in count
+   - Weekly stats included in Sunday summary
+
+5. **Activity Blocks:**
+   - Time-based organization of the day (e.g., Morning Routine, Focus Time)
+   - 6 default blocks auto-created for new users
+   - `get_blocks` tool retrieves all blocks with assigned tasks/habits
+   - Blocks have energy profiles (low/medium/high) for smart task scheduling
+   - Tasks and habits can be assigned to specific blocks
 
 ## Issues to Watch
 

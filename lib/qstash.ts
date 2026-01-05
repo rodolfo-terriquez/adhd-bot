@@ -1,5 +1,5 @@
 import { Client } from "@upstash/qstash";
-import type { NotificationPayload } from "./types.js";
+import type { NotificationPayload, DayOfWeek } from "./types.js";
 
 let qstashClient: Client | null = null;
 
@@ -227,6 +227,63 @@ export async function scheduleBodyDoublingCheckIn(
 
   console.log(`QStash: Body doubling check-in message ID ${result.messageId}`);
   return result.messageId;
+}
+
+// Helper to convert day names to CRON day numbers
+function daysToCron(days: DayOfWeek[]): string {
+  const dayMap: Record<DayOfWeek, number> = {
+    sunday: 0,
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+  };
+  return days
+    .map((d) => dayMap[d])
+    .sort((a, b) => a - b)
+    .join(",");
+}
+
+export async function scheduleBlockStart(
+  chatId: number,
+  blockId: string,
+  startTime: string, // "09:00" format
+  days: DayOfWeek[],
+): Promise<string> {
+  const client = getClient();
+  const notifyUrl = getNotifyUrl();
+
+  // Parse startTime (HH:MM format)
+  const [hour, minute] = startTime.split(":").map(Number);
+  const daysCron = daysToCron(days);
+
+  // Create CRON expression: minute hour * * days
+  const cronExpression = `${minute} ${hour} * * ${daysCron}`;
+
+  console.log(
+    `QStash: Scheduling block_start for block ${blockId} with cron ${cronExpression}`,
+  );
+
+  const payload: NotificationPayload = {
+    chatId,
+    taskId: "",
+    blockId,
+    type: "block_start",
+  };
+
+  const schedule = await client.schedules.create({
+    destination: notifyUrl,
+    cron: withTimezone(cronExpression),
+    body: JSON.stringify(payload),
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+
+  console.log(`QStash: Block start schedule ID ${schedule.scheduleId}`);
+  return schedule.scheduleId;
 }
 
 export async function deleteSchedule(scheduleId: string): Promise<void> {

@@ -621,6 +621,14 @@ async function handleBlockStart(payload: NotificationPayload): Promise<void> {
     }
   }
 
+  // Skip notification if no tasks or habits assigned to this block today
+  if (tasks.length === 0 && habits.length === 0) {
+    console.log(
+      `Skipping block start for ${block.name} - no tasks or habits assigned`,
+    );
+    return;
+  }
+
   // Set this as the current block
   await redis.setCurrentBlock(chatId, blockId);
 

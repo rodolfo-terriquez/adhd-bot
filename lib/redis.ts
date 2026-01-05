@@ -20,6 +20,7 @@ import type {
   BodyDoublingSession,
   BodyDoublingStats,
 } from "./types.js";
+import { scheduleBlockStart, deleteSchedule } from "./qstash.js";
 
 let redisClient: Redis | null = null;
 
@@ -1101,6 +1102,19 @@ export async function deleteActivityBlock(
   const block = await getActivityBlock(chatId, blockId);
   if (!block) return null;
 
+  // Cancel the QStash schedule if it exists
+  if (block.qstashScheduleId) {
+    try {
+      await deleteSchedule(block.qstashScheduleId);
+    } catch (error) {
+      console.error(
+        `Failed to delete schedule for block ${block.name}:`,
+        error,
+      );
+      // Continue with block deletion even if schedule deletion fails
+    }
+  }
+
   await redis.srem(BLOCKS_SET_KEY(chatId), blockId);
   await redis.del(BLOCK_KEY(chatId, blockId));
 
@@ -1303,6 +1317,22 @@ export async function initializeDefaultBlocks(
   const createdBlocks: ActivityBlock[] = [];
   for (const blockTemplate of DEFAULT_BLOCKS) {
     const block = await createActivityBlock(chatId, blockTemplate);
+
+    // Schedule block start notification
+    try {
+      const scheduleId = await scheduleBlockStart(
+        chatId,
+        block.id,
+        block.startTime,
+        block.days,
+      );
+      block.qstashScheduleId = scheduleId;
+      await updateActivityBlock(block);
+    } catch (error) {
+      console.error(`Failed to schedule block start for ${block.name}:`, error);
+      // Continue even if scheduling fails - block is still usable
+    }
+
     createdBlocks.push(block);
   }
 
