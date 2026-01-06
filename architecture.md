@@ -243,7 +243,7 @@ Defines all TypeScript interfaces and types:
 - Max 3 consecutive tool errors → graceful exit
 
 #### `tools.ts` (NEW - Tool Definitions & Executors)
-**Purpose:** Defines 27 tools available to the agent
+**Purpose:** Defines 30 tools available to the agent
 **Tool Categories:**
 
 **Read Tools (context gathering):**
@@ -274,6 +274,9 @@ Defines all TypeScript interfaces and types:
 - `start_body_doubling` - Start a focus session with periodic check-ins
 - `update_body_doubling_focus` - Change focus task during active session
 - `end_body_doubling` - End the current body doubling session
+- `create_block` - Create a new activity block
+- `modify_block` - Rename, change time/duration, or update days/energy profile
+- `delete_block` - Delete an activity block
 
 Each tool has:
 - OpenAI function definition (name, description, parameters)

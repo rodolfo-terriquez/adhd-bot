@@ -3,12 +3,14 @@
  * Each tool wraps existing Redis/QStash operations.
  */
 
-import type { ToolDefinition, DayOfWeek } from "./types.js";
+import type { ToolDefinition, DayOfWeek, EnergyLevel } from "./types.js";
 import * as redis from "./redis.js";
 import {
   scheduleReminder,
   cancelScheduledMessage,
   scheduleBodyDoublingCheckIn,
+  scheduleBlockStart,
+  deleteSchedule,
 } from "./qstash.js";
 
 // Get user's timezone from env
@@ -162,6 +164,101 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         type: "object",
         properties: {},
         required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_block",
+      description: "Create a new activity block for organizing the user's day.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Name of the block (e.g., 'Deep Work', 'Lunch Break')",
+          },
+          start_time: {
+            type: "string",
+            description: "Start time in HH:MM format (24-hour), e.g., '09:00'",
+          },
+          end_time: {
+            type: "string",
+            description: "End time in HH:MM format (24-hour), e.g., '12:00'",
+          },
+          days: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Days the block is active: 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'",
+          },
+          energy_profile: {
+            type: "string",
+            enum: ["low", "medium", "high", "variable"],
+            description: "Expected energy level during this block",
+          },
+        },
+        required: ["name", "start_time", "end_time", "days"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "modify_block",
+      description:
+        "Modify an existing activity block - rename it, change its time, or update its days/energy profile.",
+      parameters: {
+        type: "object",
+        properties: {
+          block_name: {
+            type: "string",
+            description: "Current name of the block to modify",
+          },
+          new_name: {
+            type: "string",
+            description: "New name for the block (if renaming)",
+          },
+          start_time: {
+            type: "string",
+            description:
+              "New start time in HH:MM format (24-hour), e.g., '09:00'",
+          },
+          end_time: {
+            type: "string",
+            description:
+              "New end time in HH:MM format (24-hour), e.g., '12:00'",
+          },
+          days: {
+            type: "array",
+            items: { type: "string" },
+            description: "New days the block is active",
+          },
+          energy_profile: {
+            type: "string",
+            enum: ["low", "medium", "high", "variable"],
+            description: "New energy profile for the block",
+          },
+        },
+        required: ["block_name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_block",
+      description: "Delete an activity block.",
+      parameters: {
+        type: "object",
+        properties: {
+          block_name: {
+            type: "string",
+            description: "Name of the block to delete",
+          },
+        },
+        required: ["block_name"],
       },
     },
   },
@@ -743,6 +840,159 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     );
 
     return JSON.stringify({ blocks: blocksWithDetails });
+  },
+
+  create_block: async (chatId, input) => {
+    const name = String(input.name);
+    const startTime = String(input.start_time);
+    const endTime = String(input.end_time);
+    const days = (input.days as string[]).map((d) =>
+      d.toLowerCase(),
+    ) as DayOfWeek[];
+    const energyProfile = (input.energy_profile as EnergyLevel) || "medium";
+
+    // Create the block
+    const block = await redis.createActivityBlock(chatId, {
+      name,
+      startTime,
+      endTime,
+      days,
+      energyProfile,
+      taskCategories: [],
+      flexLevel: "flexible",
+      isDefault: false,
+      status: "active",
+    });
+
+    // Schedule block start notification
+    try {
+      const scheduleId = await scheduleBlockStart(
+        chatId,
+        block.id,
+        block.startTime,
+        block.days,
+      );
+      block.qstashScheduleId = scheduleId;
+      await redis.updateActivityBlock(block);
+    } catch (error) {
+      console.error(`Failed to schedule block start for ${block.name}:`, error);
+    }
+
+    return JSON.stringify({
+      success: true,
+      block: {
+        id: block.id,
+        name: block.name,
+        timeRange: `${block.startTime}-${block.endTime}`,
+        days: block.days.join(", "),
+        energyProfile: block.energyProfile,
+      },
+      message: `Created block "${block.name}" from ${block.startTime} to ${block.endTime}`,
+    });
+  },
+
+  modify_block: async (chatId, input) => {
+    const blockName = String(input.block_name);
+
+    // Find the block by name
+    const block = await redis.findBlockByName(chatId, blockName);
+    if (!block) {
+      return JSON.stringify({
+        success: false,
+        error: `Block "${blockName}" not found`,
+      });
+    }
+
+    const changes: string[] = [];
+    let needsReschedule = false;
+
+    // Apply changes
+    if (input.new_name) {
+      block.name = String(input.new_name);
+      changes.push(`renamed to "${block.name}"`);
+    }
+
+    if (input.start_time) {
+      block.startTime = String(input.start_time);
+      changes.push(`start time changed to ${block.startTime}`);
+      needsReschedule = true;
+    }
+
+    if (input.end_time) {
+      block.endTime = String(input.end_time);
+      changes.push(`end time changed to ${block.endTime}`);
+    }
+
+    if (input.days) {
+      block.days = (input.days as string[]).map((d) =>
+        d.toLowerCase(),
+      ) as DayOfWeek[];
+      changes.push(`days changed to ${block.days.join(", ")}`);
+      needsReschedule = true;
+    }
+
+    if (input.energy_profile) {
+      block.energyProfile = input.energy_profile as EnergyLevel;
+      changes.push(`energy profile changed to ${block.energyProfile}`);
+    }
+
+    // Update the block in Redis
+    await redis.updateActivityBlock(block);
+
+    // Reschedule if time or days changed
+    if (needsReschedule) {
+      try {
+        // Cancel old schedule if exists
+        if (block.qstashScheduleId) {
+          await deleteSchedule(block.qstashScheduleId);
+        }
+        // Create new schedule
+        const scheduleId = await scheduleBlockStart(
+          chatId,
+          block.id,
+          block.startTime,
+          block.days,
+        );
+        block.qstashScheduleId = scheduleId;
+        await redis.updateActivityBlock(block);
+      } catch (error) {
+        console.error(`Failed to reschedule block ${block.name}:`, error);
+      }
+    }
+
+    return JSON.stringify({
+      success: true,
+      block: {
+        id: block.id,
+        name: block.name,
+        timeRange: `${block.startTime}-${block.endTime}`,
+        days: block.days.join(", "),
+        energyProfile: block.energyProfile,
+      },
+      changes,
+      message: `Updated block: ${changes.join(", ")}`,
+    });
+  },
+
+  delete_block: async (chatId, input) => {
+    const blockName = String(input.block_name);
+
+    // Find the block by name
+    const block = await redis.findBlockByName(chatId, blockName);
+    if (!block) {
+      return JSON.stringify({
+        success: false,
+        error: `Block "${blockName}" not found`,
+      });
+    }
+
+    // Delete the block (this also cancels the QStash schedule)
+    await redis.deleteActivityBlock(chatId, block.id);
+
+    return JSON.stringify({
+      success: true,
+      message: `Deleted block "${blockName}"`,
+    });
   },
 
   // WRITE TOOLS
