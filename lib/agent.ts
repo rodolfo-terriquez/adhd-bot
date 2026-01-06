@@ -192,31 +192,38 @@ export async function runAgentLoop(
         })),
       });
 
-      // Execute each tool call
-      let allErrors = true;
-      for (const toolCall of response.toolCalls) {
-        let input: Record<string, unknown> = {};
-        try {
-          input = JSON.parse(toolCall.function.arguments);
-        } catch {
-          console.error(
-            `Failed to parse tool arguments: ${toolCall.function.arguments}`,
+      // Execute all tool calls in parallel for better performance
+      const toolResults = await Promise.all(
+        response.toolCalls.map(async (toolCall) => {
+          let input: Record<string, unknown> = {};
+          try {
+            input = JSON.parse(toolCall.function.arguments);
+          } catch {
+            console.error(
+              `Failed to parse tool arguments: ${toolCall.function.arguments}`,
+            );
+          }
+
+          console.log(`Agent: Executing tool ${toolCall.function.name}`, input);
+
+          const { result, isError } = await executeTool(
+            chatId,
+            toolCall.function.name,
+            input,
           );
-        }
 
-        console.log(`Agent: Executing tool ${toolCall.function.name}`, input);
+          console.log(
+            `Agent: Tool result (error=${isError}):`,
+            result.substring(0, 200),
+          );
 
-        const { result, isError } = await executeTool(
-          chatId,
-          toolCall.function.name,
-          input,
-        );
+          return { toolCall, result, isError };
+        }),
+      );
 
-        console.log(
-          `Agent: Tool result (error=${isError}):`,
-          result.substring(0, 200),
-        );
-
+      // Process results and add to messages
+      let allErrors = true;
+      for (const { toolCall, result, isError } of toolResults) {
         if (!isError) {
           allErrors = false;
         }
