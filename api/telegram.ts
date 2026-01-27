@@ -12,6 +12,7 @@ import {
   scheduleMorningReview,
   cancelScheduledMessage,
   listAllSchedules,
+  deleteSchedule,
 } from "../lib/qstash.js";
 
 // Register the summarization callback to avoid circular imports
@@ -108,6 +109,13 @@ export default async function handler(
     // Handle /debug command
     if (userText.trim().toLowerCase() === "/debug") {
       await handleDebugCommand(chatId);
+      res.status(200).json({ ok: true });
+      return;
+    }
+
+    // Handle /reset command - completely reset the bot for this user
+    if (userText.trim().toLowerCase() === "/reset") {
+      await handleResetCommand(chatId);
       res.status(200).json({ ok: true });
       return;
     }
@@ -648,6 +656,35 @@ async function handleScheduleDebugCommand(chatId: number): Promise<void> {
     filename,
     "Schedule system debug file",
   );
+}
+
+async function handleResetCommand(chatId: number): Promise<void> {
+  await telegram.sendMessage(
+    chatId,
+    "Resetting everything... This will clear all your data and start fresh.",
+  );
+
+  try {
+    const { deletedKeys, cancelledSchedules } = await redis.clearAllUserData(
+      chatId,
+      deleteSchedule,
+    );
+
+    // Re-register the chat and set up default schedules (like a new user)
+    await redis.registerChat(chatId);
+    await setupDefaultSchedules(chatId);
+
+    await telegram.sendMessage(
+      chatId,
+      `All done! Your data has been cleared and I'm ready to start fresh with you. 🐾\n\n(Cleared ${deletedKeys} items and ${cancelledSchedules} schedules)`,
+    );
+  } catch (error) {
+    console.error(`[${chatId}] Reset failed:`, error);
+    await telegram.sendMessage(
+      chatId,
+      "Something went wrong during the reset. Please try again or contact support.",
+    );
+  }
 }
 
 async function setupDefaultSchedules(chatId: number): Promise<void> {

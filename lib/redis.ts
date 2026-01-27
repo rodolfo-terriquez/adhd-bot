@@ -891,6 +891,140 @@ export async function clearConversation(chatId: number): Promise<void> {
   await redis.del(CONVERSATION_KEY(chatId));
 }
 
+/**
+ * Completely reset all user data - returns the bot to a fresh state for this user.
+ * This deletes: conversation history, tasks, lists, habits, activity blocks,
+ * energy patterns, check-ins, brain dumps, body doubling sessions, and user preferences.
+ * Also cancels all QStash schedules for this user.
+ */
+export async function clearAllUserData(
+  chatId: number,
+  deleteSchedulesFn: (scheduleId: string) => Promise<void>,
+): Promise<{ deletedKeys: number; cancelledSchedules: number }> {
+  const redis = getClient();
+  let deletedKeys = 0;
+  let cancelledSchedules = 0;
+
+  // 1. Get user preferences to find schedule IDs to cancel
+  const prefs = await getUserPreferences(chatId);
+  if (prefs) {
+    const scheduleIds = [
+      prefs.checkinScheduleId,
+      prefs.weeklySummaryScheduleId,
+      prefs.endOfDayScheduleId,
+      prefs.morningReviewScheduleId,
+    ].filter(Boolean) as string[];
+
+    for (const scheduleId of scheduleIds) {
+      try {
+        await deleteSchedulesFn(scheduleId);
+        cancelledSchedules++;
+      } catch (error) {
+        console.error(`Failed to cancel schedule ${scheduleId}:`, error);
+      }
+    }
+  }
+
+  // 2. Get and delete all activity blocks (and their QStash schedules)
+  const blocks = await getAllBlocks(chatId);
+  for (const block of blocks) {
+    if (block.qstashScheduleId) {
+      try {
+        await deleteSchedulesFn(block.qstashScheduleId);
+        cancelledSchedules++;
+      } catch (error) {
+        console.error(`Failed to cancel block schedule ${block.qstashScheduleId}:`, error);
+      }
+    }
+    await redis.del(BLOCK_KEY(chatId, block.id));
+    deletedKeys++;
+  }
+  await redis.del(BLOCKS_SET_KEY(chatId));
+  deletedKeys++;
+
+  // 3. Delete all tasks
+  const taskIds = await redis.smembers<string[]>(TASKS_SET_KEY(chatId));
+  if (taskIds && taskIds.length > 0) {
+    for (const taskId of taskIds) {
+      await redis.del(TASK_KEY(chatId, taskId));
+      deletedKeys++;
+    }
+  }
+  await redis.del(TASKS_SET_KEY(chatId));
+  deletedKeys++;
+
+  // 4. Delete all lists
+  const listIds = await redis.smembers<string[]>(LISTS_SET_KEY(chatId));
+  if (listIds && listIds.length > 0) {
+    for (const listId of listIds) {
+      await redis.del(LIST_KEY(chatId, listId));
+      deletedKeys++;
+    }
+  }
+  await redis.del(LISTS_SET_KEY(chatId));
+  deletedKeys++;
+
+  // 5. Delete all habits and their completions
+  const habitIds = await redis.smembers<string[]>(HABITS_SET_KEY(chatId));
+  if (habitIds && habitIds.length > 0) {
+    for (const habitId of habitIds) {
+      await redis.del(HABIT_KEY(chatId, habitId));
+      // Also delete completion tracking set
+      await redis.del(HABIT_COMPLETIONS_SET_KEY(chatId, habitId));
+      deletedKeys += 2;
+    }
+  }
+  await redis.del(HABITS_SET_KEY(chatId));
+  deletedKeys++;
+
+  // 6. Delete conversation history
+  await redis.del(CONVERSATION_KEY(chatId));
+  deletedKeys++;
+
+  // 7. Delete energy pattern
+  await redis.del(ENERGY_PATTERN_KEY(chatId));
+  deletedKeys++;
+
+  // 8. Delete user preferences
+  await redis.del(USER_PREFS_KEY(chatId));
+  deletedKeys++;
+
+  // 9. Delete awaiting check-in state
+  await redis.del(AWAITING_CHECKIN_KEY(chatId));
+  deletedKeys++;
+
+  // 10. Delete pending follow-up
+  await redis.del(PENDING_FOLLOW_UP_KEY(chatId));
+  deletedKeys++;
+
+  // 11. Delete current block tracking
+  await redis.del(CURRENT_BLOCK_KEY(chatId));
+  deletedKeys++;
+
+  // 12. Delete captured items (pending)
+  await redis.del(CAPTURED_PENDING_KEY(chatId));
+  deletedKeys++;
+
+  // 13. Delete body doubling current session and history
+  await redis.del(BODY_DOUBLING_CURRENT_KEY(chatId));
+  const sessionIds = await redis.smembers<string[]>(BODY_DOUBLING_SESSIONS_SET_KEY(chatId));
+  if (sessionIds && sessionIds.length > 0) {
+    for (const sessionId of sessionIds) {
+      await redis.del(BODY_DOUBLING_SESSION_KEY(chatId, sessionId));
+      deletedKeys++;
+    }
+  }
+  await redis.del(BODY_DOUBLING_SESSIONS_SET_KEY(chatId));
+  deletedKeys++;
+
+  // 14. Remove from active chats set
+  await redis.srem(ACTIVE_CHATS_KEY(), chatId.toString());
+
+  console.log(`[${chatId}] Reset complete: ${deletedKeys} keys deleted, ${cancelledSchedules} schedules cancelled`);
+
+  return { deletedKeys, cancelledSchedules };
+}
+
 // Check-in operations
 export async function saveCheckIn(
   chatId: number,
